@@ -8,12 +8,12 @@ $(TARGET): $(OBJECTS) $(HEADER)
 	$(CXX) $(LDFLAGS) -o $@ $< $(LDLIBS)
 
 install:
-	@mkdir -p $(PREFIX)/include/osrmc
-	install -m 0644 $(HEADER) $(PREFIX)/include/osrmc
-	@mkdir -p $(PREFIX)/lib
-	install -m 0644 $(TARGET) $(PREFIX)/lib
-	ln -sf $(PREFIX)/lib/$(TARGET) $(PREFIX)/lib/$(TARGET).$(VERSION_MAJOR)
-	ln -sf $(PREFIX)/lib/$(TARGET) $(PREFIX)/lib/$(TARGET).$(VERSION_MAJOR).$(VERSION_MINOR)
+	@mkdir -p $(DESTDIR)$(PREFIX)/include/osrmc
+	install -m 0644 $(HEADER) $(DESTDIR)$(PREFIX)/include/osrmc
+	@mkdir -p $(DESTDIR)$(PREFIX)/lib
+	install -m 0755 $(TARGET) $(DESTDIR)$(PREFIX)/lib
+	ln -sf $(TARGET) $(DESTDIR)$(PREFIX)/lib/$(TARGET).$(VERSION_MAJOR)
+	ln -sf $(TARGET) $(DESTDIR)$(PREFIX)/lib/$(TARGET).$(VERSION_MAJOR).$(VERSION_MINOR)
 
 clean:
 	@$(RM) $(OBJECTS) $(TARGET)
