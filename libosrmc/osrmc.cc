@@ -235,7 +235,7 @@ void osrmc_table_annotations_enable_distance(osrmc_table_annotations_t annotatio
   if (enable) {
     *annotations_typed |= AnnotationsType::Distance;
   } else {
-    *annotations_typed = static_cast<AnnotationsType>(static_cast<int>(*annotations_typed) ^ static_cast<int>(AnnotationsType::Distance));
+    *annotations_typed = static_cast<AnnotationsType>(static_cast<int>(*annotations_typed) & ~static_cast<int>(AnnotationsType::Distance));
   }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -330,7 +330,7 @@ float osrmc_table_response_distance(osrmc_table_response_t response, unsigned lo
     return INFINITY;
   }
 
-  auto& distances = std::get<osrm::json::Array>(response_typed->values["distances"]);
+  auto& distances = std::get<osrm::json::Array>(response_typed->values.at("distances"));
   auto& distances_from_to_all = std::get<osrm::json::Array>(distances.values.at(from));
   auto nullable = distances_from_to_all.values.at(to);
 
