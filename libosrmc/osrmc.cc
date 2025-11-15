@@ -3,9 +3,14 @@
 #include <utility>
 #include <string>
 #include <stdexcept>
+#include <variant>
+#include <filesystem>
+#include <optional>
 
 #include <osrm/coordinate.hpp>
 #include <osrm/engine_config.hpp>
+#include <osrm/engine/api/base_parameters.hpp>
+#include <osrm/bearing.hpp>
 #include <osrm/json_container.hpp>
 #include <osrm/osrm.hpp>
 #include <osrm/route_parameters.hpp>
@@ -35,8 +40,8 @@ static void osrmc_error_from_exception(const std::exception& e, osrmc_error_t* e
 }
 
 static void osrmc_error_from_json(osrm::json::Object& json, osrmc_error_t* error) try {
-  auto code = json.values["code"].get<osrm::json::String>().value;
-  auto message = json.values["message"].get<osrm::json::String>().value;
+  auto code = std::get<osrm::json::String>(json.values["code"]).value;
+  auto message = std::get<osrm::json::String>(json.values["message"]).value;
   if (code.empty()) {
     code = "Unknown";
   }
@@ -57,7 +62,7 @@ osrmc_config_t osrmc_config_construct(const char* base_path, osrmc_error_t* erro
 
   if (base_path)
   {
-      out->storage_config = osrm::StorageConfig(base_path);
+      out->storage_config = osrm::StorageConfig(std::filesystem::path(base_path));
       out->use_shared_memory = false;
   }
   else
@@ -103,11 +108,11 @@ void osrmc_params_add_coordinate_with(osrmc_params_t params, float longitude, fl
   auto longitude_typed = osrm::util::FloatLongitude{longitude};
   auto latitude_typed = osrm::util::FloatLatitude{latitude};
 
-  osrm::engine::Bearing bearing_typed{static_cast<short>(bearing), static_cast<short>(range)};
+  osrm::Bearing bearing_typed{static_cast<short>(bearing), static_cast<short>(range)};
 
   params_typed->coordinates.emplace_back(std::move(longitude_typed), std::move(latitude_typed));
-  params_typed->radiuses.emplace_back(radius);
-  params_typed->bearings.emplace_back(std::move(bearing_typed));
+  params_typed->radiuses.emplace_back(std::optional<double>{radius});
+  params_typed->bearings.emplace_back(std::optional<osrm::Bearing>{std::move(bearing_typed)});
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -165,15 +170,15 @@ void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_wayp
     return;
   }
 
-  const auto& waypoints = result.values.at("waypoints").get<osrm::json::Array>().values;
+  const auto& waypoints = std::get<osrm::json::Array>(result.values.at("waypoints")).values;
 
   for (const auto& waypoint : waypoints) {
-    const auto& waypoint_typed = waypoint.get<osrm::json::Object>();
-    const auto& location = waypoint_typed.values.at("location").get<osrm::json::Array>().values;
+    const auto& waypoint_typed = std::get<osrm::json::Object>(waypoint);
+    const auto& location = std::get<osrm::json::Array>(waypoint_typed.values.at("location")).values;
 
-    const auto& name = waypoint_typed.values.at("name").get<osrm::json::String>().value;
-    const auto longitude = location[0].get<osrm::json::Number>().value;
-    const auto latitude = location[1].get<osrm::json::Number>().value;
+    const auto& name = std::get<osrm::json::String>(waypoint_typed.values.at("name")).value;
+    const auto longitude = std::get<osrm::json::Number>(location[0]).value;
+    const auto latitude = std::get<osrm::json::Number>(location[1]).value;
 
     (void)handler(data, name.c_str(), longitude, latitude);
   }
@@ -188,10 +193,10 @@ void osrmc_route_response_destruct(osrmc_route_response_t response) {
 float osrmc_route_response_distance(osrmc_route_response_t response, osrmc_error_t* error) try {
   auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
 
-  auto& routes = response_typed->values["routes"].get<osrm::json::Array>();
-  auto& route = routes.values.at(0).get<osrm::json::Object>();
+  auto& routes = std::get<osrm::json::Array>(response_typed->values["routes"]);
+  auto& route = std::get<osrm::json::Object>(routes.values.at(0));
 
-  const auto distance = route.values["distance"].get<osrm::json::Number>().value;
+  const auto distance = std::get<osrm::json::Number>(route.values["distance"]).value;
   return distance;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -201,10 +206,10 @@ float osrmc_route_response_distance(osrmc_route_response_t response, osrmc_error
 float osrmc_route_response_duration(osrmc_route_response_t response, osrmc_error_t* error) try {
   auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
 
-  auto& routes = response_typed->values["routes"].get<osrm::json::Array>();
-  auto& route = routes.values.at(0).get<osrm::json::Object>();
+  auto& routes = std::get<osrm::json::Array>(response_typed->values["routes"]);
+  auto& route = std::get<osrm::json::Object>(routes.values.at(0));
 
-  const auto duration = route.values["duration"].get<osrm::json::Number>().value;
+  const auto duration = std::get<osrm::json::Number>(route.values["duration"]).value;
   return duration;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -300,15 +305,15 @@ float osrmc_table_response_duration(osrmc_table_response_t response, unsigned lo
     return INFINITY;
   }
 
-  auto& durations = response_typed->values["durations"].get<osrm::json::Array>();
-  auto& durations_from_to_all = durations.values.at(from).get<osrm::json::Array>();
+  auto& durations = std::get<osrm::json::Array>(response_typed->values["durations"]);
+  auto& durations_from_to_all = std::get<osrm::json::Array>(durations.values.at(from));
   auto nullable = durations_from_to_all.values.at(to);
 
-  if (nullable.is<osrm::json::Null>()) {
+  if (std::holds_alternative<osrm::json::Null>(nullable)) {
     *error = new osrmc_error{"NoRoute", "Impossible route between points"};
     return INFINITY;
   }
-  auto duration = nullable.get<osrm::json::Number>().value;
+  auto duration = std::get<osrm::json::Number>(nullable).value;
 
   return duration;
 } catch (const std::exception& e) {
@@ -325,15 +330,15 @@ float osrmc_table_response_distance(osrmc_table_response_t response, unsigned lo
     return INFINITY;
   }
 
-  auto& distances = response_typed->values["distances"].get<osrm::json::Array>();
-  auto& distances_from_to_all = distances.values.at(from).get<osrm::json::Array>();
+  auto& distances = std::get<osrm::json::Array>(response_typed->values["distances"]);
+  auto& distances_from_to_all = std::get<osrm::json::Array>(distances.values.at(from));
   auto nullable = distances_from_to_all.values.at(to);
 
-  if (nullable.is<osrm::json::Null>()) {
+  if (std::holds_alternative<osrm::json::Null>(nullable)) {
     *error = new osrmc_error{"NoRoute", "Impossible route between points"};
     return INFINITY;
   }
-  auto distance = nullable.get<osrm::json::Number>().value;
+  auto distance = std::get<osrm::json::Number>(nullable).value;
 
   return distance;
 } catch (const std::exception& e) {
