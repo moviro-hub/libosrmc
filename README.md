@@ -10,6 +10,21 @@ Note: Originally tested against OSRM 5.4 release. Updated and modernized for OSR
 - JSON Null checking: use `std::holds_alternative<osrm::json::Null>()` instead of `.is<>()`
 - StorageConfig constructor now requires `std::filesystem::path` instead of `const char*`
 
+##### Dependencies
+
+This library requires OSRM 6.0 and its dependencies.
+
+**Quick summary:**
+- **OSRM 6.0**: The libosrm library with pkg-config support
+- **Boost**: Version 1.81.0 or higher (required by OSRM, linked via libosrm)
+- **C++20 compatible compiler**: GCC 10+ or Clang 12+
+- **pkg-config**: For discovering OSRM build configuration
+
+**Verifying dependencies:**
+
+    make check-deps
+
+This will verify that all required dependencies are available and properly configured.
 
 ##### Quick Start
 
