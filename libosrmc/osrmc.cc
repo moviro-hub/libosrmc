@@ -1,8 +1,7 @@
-#include <cassert>
 #include <cmath>
 #include <utility>
 #include <string>
-#include <stdexcept>
+#include <exception>
 #include <variant>
 #include <filesystem>
 #include <optional>
