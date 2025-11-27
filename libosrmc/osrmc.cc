@@ -1105,11 +1105,29 @@ void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_wayp
     return;
   }
 
+  // Check if waypoints exist in the result
+  if (result.values.find("waypoints") == result.values.end()) {
+    if (error) {
+      *error = new osrmc_error{"InvalidResponse", "Response does not contain waypoints"};
+    }
+    return;
+  }
+
   const auto& waypoints = std::get<osrm::json::Array>(result.values.at("waypoints")).values;
 
   for (const auto& waypoint : waypoints) {
     const auto& waypoint_typed = std::get<osrm::json::Object>(waypoint);
+
+    // Check if location exists and has valid data
+    if (waypoint_typed.values.find("location") == waypoint_typed.values.end()) {
+      continue; // Skip waypoints without location
+    }
+
     const auto& location = std::get<osrm::json::Array>(waypoint_typed.values.at("location")).values;
+
+    if (location.size() < 2) {
+      continue; // Skip waypoints with invalid location data
+    }
 
     // Check if "name" field exists (it may be missing)
     const char* name_str = "";
