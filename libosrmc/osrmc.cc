@@ -1076,6 +1076,20 @@ void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_wayp
     return;
   }
 
+  if (!osrm) {
+    if (error) {
+      *error = new osrmc_error{"InvalidArgument", "OSRM instance cannot be null"};
+    }
+    return;
+  }
+
+  if (!params) {
+    if (error) {
+      *error = new osrmc_error{"InvalidArgument", "Route parameters cannot be null"};
+    }
+    return;
+  }
+
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
 
