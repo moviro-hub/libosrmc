@@ -120,10 +120,10 @@
  *   }
  *
  *
- * Responses and Callbacks
- * =======================
+ * Responses
+ * =========
  *
- * The library provides both functions returning response objects from services as well as functions taking callbacks.
+ * The library provides functions returning response objects from services.
  *
  * Response object types follow the osrmc_service_response_t naming convention.
  * You take over ownership and have to destruct the response object via osrmc_service_response_destruct.
@@ -131,21 +131,9 @@
  *
  * Example:
  *
- *   response = osrmc_route(osrm, params, longitude, latitude, &error);
+ *   response = osrmc_route(osrm, params, &error);
  *   distance = osrmc_route_response_distance(response, &error);
  *   osrmc_route_response_destruct(response);
- *
- * For functions taking callbacks, the library expects you to provide handlers, for example for waypoints.
- * The library handles response ownership and cleanup internally, that is all you have to do is check for failure.
- * All handlers and functions invoking handlers take user-provided void* for transparently passing through client data.
- *
- * Example:
- *
- *   void my_waypoint_handler(void* data, const char* name, double longitude, double latitude) {
- *     printf("Longitude: %f, Latitude: %f\n", longitude, latitude);
- *   }
- *
- *   osrmc_route_with(osrm, params, my_waypoint_handler, NULL, &error);
  *
  */
 
@@ -206,10 +194,6 @@ typedef struct osrmc_nearest_response* osrmc_nearest_response_t;
 typedef struct osrmc_match_response* osrmc_match_response_t;
 typedef struct osrmc_trip_response* osrmc_trip_response_t;
 typedef struct osrmc_tile_response* osrmc_tile_response_t;
-
-/* Service-specific callbacks */
-
-typedef void (*osrmc_waypoint_handler_t)(void* data, const char* name, double longitude, double latitude);
 
 /* Output formats */
 typedef enum {
@@ -295,8 +279,6 @@ OSRMC_API void osrmc_route_params_add_waypoint(osrmc_route_params_t params, size
 OSRMC_API void osrmc_route_params_clear_waypoints(osrmc_route_params_t params);
 
 OSRMC_API osrmc_route_response_t osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error);
-OSRMC_API void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_waypoint_handler_t handler,
-                                void* data, osrmc_error_t* error);
 OSRMC_API void osrmc_route_response_destruct(osrmc_route_response_t response);
 OSRMC_API double osrmc_route_response_distance(osrmc_route_response_t response, osrmc_error_t* error);
 OSRMC_API double osrmc_route_response_duration(osrmc_route_response_t response, osrmc_error_t* error);
