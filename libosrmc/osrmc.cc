@@ -1069,6 +1069,11 @@ osrmc_route_response_t osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t param
 
 void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_waypoint_handler_t handler, void* data,
                       osrmc_error_t* error) try {
+  if (!handler) {
+    *error = new osrmc_error{"InvalidArgument", "Handler cannot be null"};
+    return;
+  }
+
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
 
@@ -1090,11 +1095,17 @@ void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_wayp
     const auto& waypoint_typed = std::get<osrm::json::Object>(waypoint);
     const auto& location = std::get<osrm::json::Array>(waypoint_typed.values.at("location")).values;
 
-    const auto& name = std::get<osrm::json::String>(waypoint_typed.values.at("name")).value;
+    // Check if "name" field exists (it may be missing)
+    const char* name_str = "";
+    if (waypoint_typed.values.find("name") != waypoint_typed.values.end()) {
+      const auto& name = std::get<osrm::json::String>(waypoint_typed.values.at("name")).value;
+      name_str = name.c_str();
+    }
+
     const auto longitude = std::get<osrm::json::Number>(location[0]).value;
     const auto latitude = std::get<osrm::json::Number>(location[1]).value;
 
-    (void)handler(data, name.c_str(), longitude, latitude);
+    handler(data, name_str, longitude, latitude);
   }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
