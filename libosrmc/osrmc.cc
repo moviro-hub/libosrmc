@@ -1070,7 +1070,9 @@ osrmc_route_response_t osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t param
 void osrmc_route_with(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_waypoint_handler_t handler, void* data,
                       osrmc_error_t* error) try {
   if (!handler) {
-    *error = new osrmc_error{"InvalidArgument", "Handler cannot be null"};
+    if (error) {
+      *error = new osrmc_error{"InvalidArgument", "Handler cannot be null"};
+    }
     return;
   }
 
