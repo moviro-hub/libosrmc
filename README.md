@@ -1,18 +1,11 @@
 # libosrmc
 
-C wrapper around the C++ libosrm library. Useful for writing FFI bindings and guaranteeing ABI stability.
-
-Note: Originally tested against OSRM 5.4 release. Updated and modernized for OSRM 6.0 release
-
-**Notable changes from OSRM 5.4 to 6.0:**
-- Requires C++20 standard (updated from C++11)
-- JSON API changed: use `std::get<>()` instead of `.get<>()` for accessing JSON values
-- JSON Null checking: use `std::holds_alternative<osrm::json::Null>()` instead of `.is<>()`
-- StorageConfig constructor now requires `std::filesystem::path` instead of `const char*`
+A fork of Daniel Hofmann C wrapper around the C++ libosrm library.
+This fork was patched and extended to be used for a Julia wrapper for the OSRM library (see [OpenSourceRoutingMachine.jl](https://github.com/moviro-hub/OpenSourceRoutingMachine.jl)).
 
 ##### Dependencies
 
-- **OSRM 6.0**: libosrm with pkg-config support
+- **OSRM 6.0**: libosrm
 - **C++20 compiler**: GCC 10+ or Clang 12+
 - **pkg-config**: For discovering OSRM configuration
 
