@@ -26,6 +26,7 @@ else
 endif
 
 # Platform-specific settings
+CXXFLAGS_STDLIB =
 ifeq ($(TARGET),mingw)
     SHARED_EXT = .dll
     IMPLIB_EXT = .dll.a
@@ -38,8 +39,9 @@ else ifeq ($(TARGET),apple)
     IMPLIB_EXT =
     PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig
     LDFLAGS_SHARED = -dynamiclib -install_name $(PREFIX)/lib/libosrmc.$(VERSION_MAJOR)$(SHARED_EXT)
-    LDFLAGS_RPATH = -Wl,-rpath,$(PREFIX)/lib
+    LDFLAGS_RPATH = -Wl,-rpath,$(PREFIX)/lib -Wl,-undefined,dynamic_lookup
     STDCPP_LIB = -lc++
+    CXXFLAGS_STDLIB = -stdlib=libc++
 else
     SHARED_EXT = .so
     IMPLIB_EXT =
@@ -99,12 +101,12 @@ else
 endif
 
 # Combine all flags
-CXXFLAGS = $(CXXFLAGS_BASE) $(OSRM_CFLAGS)
+CXXFLAGS = $(CXXFLAGS_BASE) $(CXXFLAGS_STDLIB) $(OSRM_CFLAGS)
 ifneq ($(EXTRA_CXXFLAGS),)
     CXXFLAGS += $(EXTRA_CXXFLAGS)
 endif
 
-# Link flags: explicit library path, RPATH for runtime resolution, OSRM libs
+# Link flags: explicit library path, RPATH for runtime resolution, OSRM libs, then C++ stdlib
 LDFLAGS = $(LDFLAGS_SHARED) $(LDFLAGS_RPATH) -L$(OSRM_LIBDIR) $(OSRM_LDFLAGS) $(STDCPP_LIB)
 
 # Export for Makefile
