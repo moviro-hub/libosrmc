@@ -31,11 +31,12 @@ check-deps:
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 # Link library with explicit paths and RPATH
+# Put object files first for better symbol resolution on Windows
 $(LIBRARY): $(OBJECTS) $(HEADER)
 	@echo "Linking $(LIBRARY)..."
 	@echo "  Library directory: $(OSRM_LIBDIR)"
 	@echo "  RPATH: $(LDFLAGS_RPATH)"
-	$(CXX) $(LDFLAGS) -o $@ $(OBJECTS)
+	$(CXX) $(LDFLAGS_SHARED) $(LDFLAGS_RPATH) -o $@ $(OBJECTS) -L$(OSRM_LIBDIR) $(OSRM_LDFLAGS) $(STDCPP_LIB)
 	@echo "Build complete: $(LIBRARY)"
 
 # Install library and headers
