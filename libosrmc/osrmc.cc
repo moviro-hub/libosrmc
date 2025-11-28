@@ -28,7 +28,6 @@
 #include <osrm/status.hpp>
 #include <osrm/storage_config.hpp>
 #include "engine/hint.hpp"
-#include "engine/polyline_compressor.hpp"
 
 #include "osrmc.h"
 
@@ -56,7 +55,7 @@ struct osrmc_coordinate final {
 
 struct osrmc_route_response final {
   osrm::json::Object json;
-  osrm::RouteParameters::GeometriesType geometries = osrm::RouteParameters::GeometriesType::Polyline;
+  osrm::RouteParameters::GeometriesType geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
   std::vector<std::vector<osrmc_coordinate>> geometry_cache;
   std::vector<bool> geometry_cache_ready;
 };
@@ -236,12 +235,6 @@ static std::optional<osrm::storage::FeatureDataset> osrmc_feature_dataset_from_s
 
 static std::optional<osrm::RouteParameters::GeometriesType> osrmc_route_geometries_from_string(const std::string& value) {
   const auto lower = osrmc_to_lower(value);
-  if (lower == "polyline") {
-    return osrm::RouteParameters::GeometriesType::Polyline;
-  }
-  if (lower == "polyline6") {
-    return osrm::RouteParameters::GeometriesType::Polyline6;
-  }
   if (lower == "geojson") {
     return osrm::RouteParameters::GeometriesType::GeoJSON;
   }
@@ -760,32 +753,17 @@ void osrmc_params_set_snapping(osrmc_params_t params, osrmc_snapping_t snapping,
 
 void osrmc_params_set_format(osrmc_params_t params, osrmc_output_format_t format, osrmc_error_t* error) try {
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  switch (format) {
-    case OSRMC_FORMAT_JSON:
-      params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
-      break;
-    case OSRMC_FORMAT_FLATBUFFERS:
-      params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
-      break;
-    default:
-      *error = new osrmc_error{"InvalidFormat", "Unknown output format"};
-      return;
+  // Only JSON format is supported
+  if (format != OSRMC_FORMAT_JSON) {
+    *error = new osrmc_error{"InvalidFormat", "Only JSON format is supported"};
+    return;
   }
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
-template <typename ParamsT>
-static bool osrmc_ensure_json_format(const ParamsT& params, const char* service_name, osrmc_error_t* error) {
-  if (params.format && *params.format == osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS) {
-    if (error) {
-      std::string message = std::string(service_name) + " service does not support Flatbuffers output in libosrmc";
-      *error = new osrmc_error{"UnsupportedFormat", std::move(message)};
-    }
-    return false;
-  }
-  return true;
-}
+// Format checking removed - JSON is always used
 
 static osrm::RouteParameters* osrmc_route_like_params(osrmc_route_params_t params) {
   return reinterpret_cast<osrm::RouteParameters*>(params);
@@ -897,69 +875,33 @@ static bool osrmc_collect_route_coordinates(const osrm::json::Object& route,
   }
 
   const auto& geometry = geometry_iter->second;
-  if (geometry_type == osrm::RouteParameters::GeometriesType::GeoJSON) {
-    if (!std::holds_alternative<osrm::json::Object>(geometry)) {
-      *error = new osrmc_error{"InvalidGeometry", "Expected GeoJSON geometry"};
-      return false;
-    }
 
+  // Try to extract coordinates from GeoJSON format (auto-detect from response)
+  if (std::holds_alternative<osrm::json::Object>(geometry)) {
     const auto& geometry_obj = std::get<osrm::json::Object>(geometry);
     const auto coordinates_iter = geometry_obj.values.find("coordinates");
-    if (coordinates_iter == geometry_obj.values.end()) {
+    if (coordinates_iter != geometry_obj.values.end()) {
+      // GeoJSON format detected
+      const auto& coordinates = std::get<osrm::json::Array>(coordinates_iter->second);
       out.clear();
+      out.reserve(coordinates.values.size());
+      for (const auto& coordinate_value : coordinates.values) {
+        const auto& coordinate_pair = std::get<osrm::json::Array>(coordinate_value).values;
+        if (coordinate_pair.size() < 2) {
+          *error = new osrmc_error{"InvalidGeometry", "Coordinate entry is malformed"};
+          return false;
+        }
+        const auto lon = std::get<osrm::json::Number>(coordinate_pair[0]).value;
+        const auto lat = std::get<osrm::json::Number>(coordinate_pair[1]).value;
+        out.push_back(osrmc_coordinate{lon, lat});
+      }
       return true;
     }
-
-    const auto& coordinates = std::get<osrm::json::Array>(coordinates_iter->second);
-    out.clear();
-    out.reserve(coordinates.values.size());
-    for (const auto& coordinate_value : coordinates.values) {
-      const auto& coordinate_pair = std::get<osrm::json::Array>(coordinate_value).values;
-      if (coordinate_pair.size() < 2) {
-        *error = new osrmc_error{"InvalidGeometry", "Coordinate entry is malformed"};
-        return false;
-      }
-      const auto lon = std::get<osrm::json::Number>(coordinate_pair[0]).value;
-      const auto lat = std::get<osrm::json::Number>(coordinate_pair[1]).value;
-      out.push_back(osrmc_coordinate{lon, lat});
-    }
-    return true;
   }
 
-  std::string encoded;
-  if (std::holds_alternative<osrm::json::String>(geometry)) {
-    encoded = std::get<osrm::json::String>(geometry).value;
-  } else if (std::holds_alternative<osrm::json::Object>(geometry)) {
-    const auto& geometry_obj = std::get<osrm::json::Object>(geometry);
-    const char* key = geometry_type == osrm::RouteParameters::GeometriesType::Polyline ? "polyline" : "polyline6";
-    const auto iter = geometry_obj.values.find(key);
-    if (iter != geometry_obj.values.end()) {
-      encoded = std::get<osrm::json::String>(iter->second).value;
-    }
-  }
-
-  out.clear();
-  if (encoded.empty()) {
-    return true;
-  }
-
-  std::vector<osrm::util::Coordinate> decoded;
-  if (geometry_type == osrm::RouteParameters::GeometriesType::Polyline) {
-    decoded = osrm::engine::decodePolyline<100000>(encoded);
-  } else if (geometry_type == osrm::RouteParameters::GeometriesType::Polyline6) {
-    decoded = osrm::engine::decodePolyline<1000000>(encoded);
-  } else {
-    decoded = osrm::engine::decodePolyline<100000>(encoded);
-  }
-
-  out.reserve(decoded.size());
-  for (const auto& coordinate : decoded) {
-    const auto lon = static_cast<double>(osrm::util::toFloating(coordinate.lon));
-    const auto lat = static_cast<double>(osrm::util::toFloating(coordinate.lat));
-    out.push_back(osrmc_coordinate{lon, lat});
-  }
-
-  return true;
+  // Only GeoJSON format is supported
+  *error = new osrmc_error{"UnsupportedGeometry", "Only GeoJSON geometry format is supported"};
+  return false;
 }
 
 static bool osrmc_ensure_route_geometry_cache(osrmc_route_response* response,
@@ -1047,9 +989,8 @@ osrmc_route_response_t osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t param
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
 
-  if (!osrmc_ensure_json_format(*params_typed, "Route", error)) {
-    return nullptr;
-  }
+  // Ensure JSON format (only format supported)
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 
   auto* out = new osrmc_route_response;
   const auto status = osrm_typed->Route(*params_typed, out->json);
@@ -1151,37 +1092,8 @@ double osrmc_route_response_duration_at(osrmc_route_response_t response, unsigne
 }
 
 const char* osrmc_route_response_geometry_polyline(osrmc_route_response_t response, unsigned route_index, osrmc_error_t* error) try {
-  auto* response_holder = osrmc_get_route_response(response);
-  auto& response_json = response_holder->json;
-
-  auto& routes = std::get<osrm::json::Array>(response_json.values["routes"]);
-  if (route_index >= routes.values.size()) {
-    *error = new osrmc_error{"IndexOutOfBounds", "Route index out of bounds"};
-    return nullptr;
-  }
-
-  auto& route = std::get<osrm::json::Object>(routes.values.at(route_index));
-  if (route.values.find("geometry") == route.values.end()) {
-    *error = new osrmc_error{"NoGeometry", "Geometry not available for this route"};
-    return nullptr;
-  }
-
-  const auto& geometry = route.values.at("geometry");
-  if (std::holds_alternative<osrm::json::String>(geometry)) {
-    const auto& polyline = std::get<osrm::json::String>(geometry).value;
-    return polyline.c_str();
-  } else if (std::holds_alternative<osrm::json::Object>(geometry)) {
-    const auto& geometry_obj = std::get<osrm::json::Object>(geometry);
-    if (geometry_obj.values.find("polyline") != geometry_obj.values.end()) {
-      const auto& polyline = std::get<osrm::json::String>(geometry_obj.values.at("polyline")).value;
-      return polyline.c_str();
-    } else if (geometry_obj.values.find("polyline6") != geometry_obj.values.end()) {
-      const auto& polyline = std::get<osrm::json::String>(geometry_obj.values.at("polyline6")).value;
-      return polyline.c_str();
-    }
-  }
-
-  *error = new osrmc_error{"NoPolyline", "Polyline geometry not available"};
+  // Polyline format is no longer supported - only GeoJSON is available
+  *error = new osrmc_error{"UnsupportedFormat", "Polyline format is not supported. Only GeoJSON geometry format is available."};
   return nullptr;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -1590,9 +1502,8 @@ osrmc_table_response_t osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t param
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
 
-  if (!osrmc_ensure_json_format(*params_typed, "Table", error)) {
-    return nullptr;
-  }
+  // Ensure JSON format (only format supported)
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 
   auto* out = new osrm::json::Object;
   const auto status = osrm_typed->Table(*params_typed, *out);
@@ -1891,9 +1802,8 @@ osrmc_nearest_response_t osrmc_nearest(osrmc_osrm_t osrm, osrmc_nearest_params_t
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::NearestParameters*>(params);
 
-  if (!osrmc_ensure_json_format(*params_typed, "Nearest", error)) {
-    return nullptr;
-  }
+  // Ensure JSON format (only format supported)
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 
   auto* out = new osrm::json::Object;
   const auto status = osrm_typed->Nearest(*params_typed, *out);
@@ -2069,9 +1979,8 @@ osrmc_match_response_t osrmc_match(osrmc_osrm_t osrm, osrmc_match_params_t param
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
 
-  if (!osrmc_ensure_json_format(*params_typed, "Match", error)) {
-    return nullptr;
-  }
+  // Ensure JSON format (only format supported)
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 
   auto* out = new osrm::json::Object;
   const auto status = osrm_typed->Match(*params_typed, *out);
@@ -2366,9 +2275,8 @@ osrmc_trip_response_t osrmc_trip(osrmc_osrm_t osrm, osrmc_trip_params_t params, 
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
 
-  if (!osrmc_ensure_json_format(*params_typed, "Trip", error)) {
-    return nullptr;
-  }
+  // Ensure JSON format (only format supported)
+  params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
 
   auto* out = new osrm::json::Object;
   const auto status = osrm_typed->Trip(*params_typed, *out);

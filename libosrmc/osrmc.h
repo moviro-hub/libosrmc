@@ -195,10 +195,9 @@ typedef struct osrmc_match_response* osrmc_match_response_t;
 typedef struct osrmc_trip_response* osrmc_trip_response_t;
 typedef struct osrmc_tile_response* osrmc_tile_response_t;
 
-/* Output formats */
+/* Output formats - JSON only */
 typedef enum {
-  OSRMC_FORMAT_JSON = 0,
-  OSRMC_FORMAT_FLATBUFFERS = 1
+  OSRMC_FORMAT_JSON = 0
 } osrmc_output_format_t;
 
 typedef enum {
