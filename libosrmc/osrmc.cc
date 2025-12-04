@@ -72,11 +72,6 @@ constexpr size_t COORDINATE_LONGITUDE_INDEX = 0;
 constexpr size_t COORDINATE_LATITUDE_INDEX = 1;
 constexpr size_t MIN_COORDINATE_PAIR_SIZE = 2;
 
-// Constants for default values
-constexpr int UNLIMITED_INT_VALUE = -1;
-constexpr double UNLIMITED_DOUBLE_VALUE = -1.0;
-constexpr unsigned DEFAULT_MAX_ALTERNATIVES = 3;
-
 // Helper function to validate config pointer
 static bool osrmc_validate_config(osrmc_config_t config, osrmc_error_t* error) {
   if (!config) {

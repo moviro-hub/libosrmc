@@ -38,7 +38,13 @@ $(LIBRARY): $(OBJECTS) $(HEADER)
 	@echo "Linking $(LIBRARY)..."
 	@echo "  Library directory: $(OSRM_LIBDIR)"
 	@echo "  RPATH: $(LDFLAGS_RPATH)"
+ifeq ($(TARGET),mingw)
+	$(CXX) $(LDFLAGS_SHARED) $(LDFLAGS_RPATH) -L$(OSRM_LIBDIR) -o $@ $(OBJECTS) $(OSRM_LDFLAGS) $(STDCPP_LIB)
+else ifeq ($(TARGET),apple)
+	$(CXX) $(LDFLAGS_SHARED) $(LDFLAGS_RPATH) $(LDFLAGS_STDLIB) -L$(OSRM_LIBDIR) -o $@ $(OBJECTS) $(OSRM_LDFLAGS) $(STDCPP_LIB)
+else
 	$(CXX) $(LDFLAGS) -o $@ $(OBJECTS)
+endif
 	@echo "Build complete: $(LIBRARY)"
 
 # Windows: DLLs go in bin/, import libs in lib/ (Windows convention)
