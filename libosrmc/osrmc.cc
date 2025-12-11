@@ -159,13 +159,15 @@ namespace osrmc_json {
 
 /* Error handling */
 
-static void osrmc_set_error(osrmc_error_t* error, const char* code, const char* message) {
+static void
+osrmc_set_error(osrmc_error_t* error, const char* code, const char* message) {
   if (error) {
     *error = new osrmc_error{code, message};
   }
 }
 
-static bool osrmc_validate_config(osrmc_config_t config, osrmc_error_t* error) {
+static bool
+osrmc_validate_config(osrmc_config_t config, osrmc_error_t* error) {
   if (!config) {
     osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return false;
@@ -173,7 +175,8 @@ static bool osrmc_validate_config(osrmc_config_t config, osrmc_error_t* error) {
   return true;
 }
 
-static bool osrmc_validate_params(osrmc_params_t params, osrmc_error_t* error) {
+static bool
+osrmc_validate_params(osrmc_params_t params, osrmc_error_t* error) {
   if (!params) {
     osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return false;
@@ -181,7 +184,8 @@ static bool osrmc_validate_params(osrmc_params_t params, osrmc_error_t* error) {
   return true;
 }
 
-static bool osrmc_validate_osrm(osrmc_osrm_t osrm, osrmc_error_t* error) {
+static bool
+osrmc_validate_osrm(osrmc_osrm_t osrm, osrmc_error_t* error) {
   if (!osrm) {
     osrmc_set_error(error, "InvalidArgument", "OSRM instance must not be null");
     return false;
@@ -290,7 +294,11 @@ osrmc_response_flatbuffer_helper(ResponseHandle response, osrmc_error_t* error) 
 
 template<typename ParamsHandle, typename ParamsType, typename ResponseHandle, typename MethodFunc>
 static ResponseHandle
-osrmc_service_helper(osrmc_osrm_t osrm, ParamsHandle params, MethodFunc method, const char* error_name, osrmc_error_t* error) try {
+osrmc_service_helper(osrmc_osrm_t osrm,
+                     ParamsHandle params,
+                     MethodFunc method,
+                     const char* error_name,
+                     osrmc_error_t* error) try {
   if (!osrmc_validate_osrm(osrm, error) || !params) {
     if (!params) {
       osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
