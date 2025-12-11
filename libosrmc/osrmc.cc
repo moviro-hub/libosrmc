@@ -15,11 +15,11 @@
 #include <vector>
 
 // OSRM backend headers
-#include <osrm/engine/hint.hpp>
 #include <osrm/bearing.hpp>
 #include <osrm/coordinate.hpp>
 #include <osrm/engine/api/base_parameters.hpp>
 #include <osrm/engine/api/base_result.hpp>
+#include <osrm/engine/hint.hpp>
 #include <osrm/engine_config.hpp>
 #include <osrm/json_container.hpp>
 #include <osrm/match_parameters.hpp>
@@ -56,11 +56,6 @@ struct osrmc_error final {
 
 struct osrmc_blob final {
   std::string data;
-};
-
-struct osrmc_route_response final {
-  osrm::json::Object json;
-  osrm::RouteParameters::GeometriesType geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
 };
 
 namespace {
@@ -333,6 +328,148 @@ osrmc_error_from_json(osrm::json::Object& json, osrmc_error_t* error) try {
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
+/* common helper functions */
+
+
+static osrm::RouteParameters*
+osrmc_route_like_params(osrmc_route_params_t params) {
+  return reinterpret_cast<osrm::RouteParameters*>(params);
+}
+
+static osrm::RouteParameters*
+osrmc_route_like_params(osrmc_match_params_t params) {
+  return static_cast<osrm::RouteParameters*>(reinterpret_cast<osrm::MatchParameters*>(params));
+}
+
+static osrm::RouteParameters*
+osrmc_route_like_params(osrmc_trip_params_t params) {
+  return static_cast<osrm::RouteParameters*>(reinterpret_cast<osrm::TripParameters*>(params));
+}
+
+template<typename ParamsHandle>
+static void
+osrmc_route_like_set_steps_flag(ParamsHandle params, int on) {
+  if (!params) {
+    return;
+  }
+  osrmc_route_like_params(params)->steps = on != 0;
+}
+
+template<typename ParamsHandle>
+static void
+osrmc_route_like_set_alternatives_flag(ParamsHandle params, int on) {
+  if (!params) {
+    return;
+  }
+  osrmc_route_like_params(params)->alternatives = on != 0;
+}
+
+template<typename ParamsHandle>
+static void
+osrmc_route_like_set_number_of_alternatives_value(ParamsHandle params, unsigned count) {
+  if (!params) {
+    return;
+  }
+  auto* params_typed = osrmc_route_like_params(params);
+  params_typed->number_of_alternatives = count;
+  params_typed->alternatives = count > 0;
+}
+
+static void
+osrmc_route_like_set_continue_straight(osrm::RouteParameters* params, int on) {
+  if (!params) {
+    return;
+  }
+  if (on < 0) {
+    params->continue_straight = std::nullopt;
+  } else {
+    params->continue_straight = (on != 0);
+  }
+}
+
+
+static void
+osrmc_route_like_add_waypoint(osrm::RouteParameters* params, size_t index) {
+  if (!params) {
+    return;
+  }
+  params->waypoints.emplace_back(index);
+}
+
+static void
+osrmc_route_like_clear_waypoints(osrm::RouteParameters* params) {
+  if (!params) {
+    return;
+  }
+  params->waypoints.clear();
+}
+
+static void
+osrmc_route_like_set_geometries(osrm::RouteParameters* params, geometries_type_t geometries, osrmc_error_t* error) {
+  if (!params) {
+    return;
+  }
+  switch (geometries) {
+    case GEOMETRIES_POLYLINE:
+      params->geometries = osrm::RouteParameters::GeometriesType::Polyline;
+      break;
+    case GEOMETRIES_POLYLINE6:
+      params->geometries = osrm::RouteParameters::GeometriesType::Polyline6;
+      break;
+    case GEOMETRIES_GEOJSON:
+      params->geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
+      break;
+    default:
+      if (error) {
+        *error = new osrmc_error{"InvalidArgument", "Unknown geometries type"};
+      }
+      return;
+  }
+}
+
+static void
+osrmc_route_like_set_overview(osrm::RouteParameters* params, overview_type_t overview, osrmc_error_t* error) {
+  if (!params) {
+    return;
+  }
+  switch (overview) {
+    case OVERVIEW_SIMPLIFIED:
+      params->overview = osrm::RouteParameters::OverviewType::Simplified;
+      break;
+    case OVERVIEW_FULL:
+      params->overview = osrm::RouteParameters::OverviewType::Full;
+      break;
+    case OVERVIEW_FALSE:
+      params->overview = osrm::RouteParameters::OverviewType::False;
+      break;
+    default:
+      if (error) {
+        *error = new osrmc_error{"InvalidArgument", "Unknown overview type"};
+      }
+      return;
+  }
+}
+
+static void
+osrmc_route_like_set_annotations(osrm::RouteParameters* params, route_annotations_type_t annotations) {
+  if (!params) {
+    return;
+  }
+  params->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
+  params->annotations = (annotations != ROUTE_ANNOTATIONS_NONE);
+}
+
+template<typename ValidateFunc, typename GetJsonFunc>
+static osrmc_blob_t
+osrmc_response_json_helper(ValidateFunc validate_func, GetJsonFunc get_json_func, osrmc_error_t* error) try {
+  if (!validate_func(error)) {
+    return nullptr;
+  }
+  return osrmc_render_json(get_json_func());
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
 
 /* Error handling */
 
@@ -505,17 +642,17 @@ osrmc_config_set_use_mmap(osrmc_config_t config, bool use_mmap, osrmc_error_t* e
 }
 
 void
-osrmc_config_set_algorithm(osrmc_config_t config, osrmc_algorithm_t algorithm, osrmc_error_t* error) try {
+osrmc_config_set_algorithm(osrmc_config_t config, algorithm_t algorithm, osrmc_error_t* error) try {
   if (!osrmc_validate_config(config, error)) {
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
 
   switch (algorithm) {
-    case OSRMC_ALGORITHM_CH:
+    case ALGORITHM_CH:
       config_typed->algorithm = osrm::EngineConfig::Algorithm::CH;
       break;
-    case OSRMC_ALGORITHM_MLD:
+    case ALGORITHM_MLD:
       config_typed->algorithm = osrm::EngineConfig::Algorithm::MLD;
       break;
     default:
@@ -730,7 +867,7 @@ osrmc_params_set_bearing(osrmc_params_t params,
 void
 osrmc_params_set_approach(osrmc_params_t params,
                           size_t coordinate_index,
-                          osrmc_approach_t approach,
+                          approach_t approach,
                           osrmc_error_t* error) try {
   if (!osrmc_validate_params(params, error)) {
     return;
@@ -743,13 +880,13 @@ osrmc_params_set_approach(osrmc_params_t params,
   osrmc_ensure_container_size(params_typed->approaches, params_typed->coordinates.size());
   std::optional<osrm::engine::Approach> approach_value;
   switch (approach) {
-    case OSRMC_APPROACH_CURB:
+    case APPROACH_CURB:
       approach_value = osrm::engine::Approach::CURB;
       break;
-    case OSRMC_APPROACH_UNRESTRICTED:
+    case APPROACH_UNRESTRICTED:
       approach_value = osrm::engine::Approach::UNRESTRICTED;
       break;
-    case OSRMC_APPROACH_OPPOSITE:
+    case APPROACH_OPPOSITE:
       approach_value = osrm::engine::Approach::OPPOSITE;
       break;
     default:
@@ -803,16 +940,16 @@ osrmc_params_set_skip_waypoints(osrmc_params_t params, int on, osrmc_error_t* er
 }
 
 void
-osrmc_params_set_snapping(osrmc_params_t params, osrmc_snapping_t snapping, osrmc_error_t* error) try {
+osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_error_t* error) try {
   if (!osrmc_validate_params(params, error)) {
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
   switch (snapping) {
-    case OSRMC_SNAPPING_DEFAULT:
+    case SNAPPING_DEFAULT:
       params_typed->snapping = osrm::engine::api::BaseParameters::SnappingType::Default;
       break;
-    case OSRMC_SNAPPING_ANY:
+    case SNAPPING_ANY:
       params_typed->snapping = osrm::engine::api::BaseParameters::SnappingType::Any;
       break;
     default:
@@ -824,13 +961,13 @@ osrmc_params_set_snapping(osrmc_params_t params, osrmc_snapping_t snapping, osrm
 }
 
 void
-osrmc_params_set_format(osrmc_params_t params, osrmc_output_format_t format, osrmc_error_t* error) try {
+osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_error_t* error) try {
   if (!osrmc_validate_params(params, error)) {
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
   switch (format) {
-    case OSRMC_FORMAT_JSON:
+    case FORMAT_JSON:
       params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
       break;
     default:
@@ -841,368 +978,6 @@ osrmc_params_set_format(osrmc_params_t params, osrmc_output_format_t format, osr
   }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-}
-
-static osrm::RouteParameters*
-osrmc_route_like_params(osrmc_route_params_t params) {
-  return reinterpret_cast<osrm::RouteParameters*>(params);
-}
-
-static osrm::RouteParameters*
-osrmc_route_like_params(osrmc_match_params_t params) {
-  return static_cast<osrm::RouteParameters*>(reinterpret_cast<osrm::MatchParameters*>(params));
-}
-
-static osrm::RouteParameters*
-osrmc_route_like_params(osrmc_trip_params_t params) {
-  return static_cast<osrm::RouteParameters*>(reinterpret_cast<osrm::TripParameters*>(params));
-}
-
-template<typename ParamsHandle>
-static void
-osrmc_route_like_set_steps_flag(ParamsHandle params, int on) {
-  if (!params) {
-    return;
-  }
-  osrmc_route_like_params(params)->steps = on != 0;
-}
-
-template<typename ParamsHandle>
-static void
-osrmc_route_like_set_alternatives_flag(ParamsHandle params, int on) {
-  if (!params) {
-    return;
-  }
-  osrmc_route_like_params(params)->alternatives = on != 0;
-}
-
-template<typename ParamsHandle>
-static void
-osrmc_route_like_set_number_of_alternatives_value(ParamsHandle params, unsigned count) {
-  if (!params) {
-    return;
-  }
-  auto* params_typed = osrmc_route_like_params(params);
-  params_typed->number_of_alternatives = count;
-  params_typed->alternatives = count > 0;
-}
-
-static void
-osrmc_route_like_set_continue_straight_impl(osrm::RouteParameters* params, int on) {
-  if (!params) {
-    return;
-  }
-  if (on < 0) {
-    params->continue_straight = std::nullopt;
-  } else {
-    params->continue_straight = (on != 0);
-  }
-}
-
-
-static void
-osrmc_route_like_add_waypoint_impl(osrm::RouteParameters* params, size_t index) {
-  if (!params) {
-    return;
-  }
-  params->waypoints.emplace_back(index);
-}
-
-static void
-osrmc_route_like_clear_waypoints_impl(osrm::RouteParameters* params) {
-  if (!params) {
-    return;
-  }
-  params->waypoints.clear();
-}
-
-static osrmc_route_response*
-osrmc_get_route_response(osrmc_route_response_t response) {
-  return reinterpret_cast<osrmc_route_response*>(response);
-}
-
-static const osrm::json::Object*
-osrmc_get_route_step(const osrm::json::Object& response_json,
-                     unsigned route_index,
-                     unsigned leg_index,
-                     unsigned step_index,
-                     osrmc_error_t* error) {
-  const auto& routes = std::get<osrm::json::Array>(response_json.values.at("routes"));
-  if (route_index >= routes.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Route index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& route = std::get<osrm::json::Object>(routes.values.at(route_index));
-  const auto& legs = std::get<osrm::json::Array>(route.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& leg = std::get<osrm::json::Object>(legs.values.at(leg_index));
-  const auto steps_iter = leg.values.find("steps");
-  if (steps_iter == leg.values.end()) {
-    if (error) {
-      *error = new osrmc_error{"NoSteps", "Steps not available for this leg"};
-    }
-    return nullptr;
-  }
-
-  const auto& steps = std::get<osrm::json::Array>(steps_iter->second);
-  if (step_index >= steps.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Step index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(steps.values.at(step_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_match_step(const osrm::json::Object& response_json,
-                     unsigned route_index,
-                     unsigned leg_index,
-                     unsigned step_index,
-                     osrmc_error_t* error) {
-  const auto& matchings = std::get<osrm::json::Array>(response_json.values.at("matchings"));
-  if (route_index >= matchings.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Route index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& route = std::get<osrm::json::Object>(matchings.values.at(route_index));
-  const auto& legs = std::get<osrm::json::Array>(route.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& leg = std::get<osrm::json::Object>(legs.values.at(leg_index));
-  const auto steps_iter = leg.values.find("steps");
-  if (steps_iter == leg.values.end()) {
-    if (error) {
-      *error = new osrmc_error{"NoSteps", "Steps not available for this leg"};
-    }
-    return nullptr;
-  }
-
-  const auto& steps = std::get<osrm::json::Array>(steps_iter->second);
-  if (step_index >= steps.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Step index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(steps.values.at(step_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_trip_step(const osrm::json::Object& response_json,
-                    unsigned trip_index,
-                    unsigned leg_index,
-                    unsigned step_index,
-                    osrmc_error_t* error) {
-  const auto& trips = std::get<osrm::json::Array>(response_json.values.at("trips"));
-  if (trip_index >= trips.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Trip index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& trip = std::get<osrm::json::Object>(trips.values.at(trip_index));
-  const auto& legs = std::get<osrm::json::Array>(trip.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& leg = std::get<osrm::json::Object>(legs.values.at(leg_index));
-  const auto steps_iter = leg.values.find("steps");
-  if (steps_iter == leg.values.end()) {
-    if (error) {
-      *error = new osrmc_error{"NoSteps", "Steps not available for this leg"};
-    }
-    return nullptr;
-  }
-
-  const auto& steps = std::get<osrm::json::Array>(steps_iter->second);
-  if (step_index >= steps.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Step index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(steps.values.at(step_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_route_leg(const osrm::json::Object& response_json,
-                    unsigned route_index,
-                    unsigned leg_index,
-                    osrmc_error_t* error) {
-  const auto& routes = std::get<osrm::json::Array>(response_json.values.at("routes"));
-  if (route_index >= routes.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Route index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& route = std::get<osrm::json::Object>(routes.values.at(route_index));
-  const auto& legs = std::get<osrm::json::Array>(route.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(legs.values.at(leg_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_match_leg(const osrm::json::Object& response_json,
-                    unsigned route_index,
-                    unsigned leg_index,
-                    osrmc_error_t* error) {
-  const auto& matchings = std::get<osrm::json::Array>(response_json.values.at("matchings"));
-  if (route_index >= matchings.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Route index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& route = std::get<osrm::json::Object>(matchings.values.at(route_index));
-  const auto& legs = std::get<osrm::json::Array>(route.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(legs.values.at(leg_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_trip_leg(const osrm::json::Object& response_json,
-                   unsigned trip_index,
-                   unsigned leg_index,
-                   osrmc_error_t* error) {
-  const auto& trips = std::get<osrm::json::Array>(response_json.values.at("trips"));
-  if (trip_index >= trips.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Trip index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  const auto& trip = std::get<osrm::json::Object>(trips.values.at(trip_index));
-  const auto& legs = std::get<osrm::json::Array>(trip.values.at("legs"));
-  if (leg_index >= legs.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Leg index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(legs.values.at(leg_index));
-}
-
-static const osrm::json::Object*
-osrmc_get_step_intersection(const osrm::json::Object& step, unsigned intersection_index, osrmc_error_t* error) {
-  const auto intersections_iter = step.values.find("intersections");
-  if (intersections_iter == step.values.end()) {
-    if (error) {
-      *error = new osrmc_error{"NoIntersections", "Intersections not available for this step"};
-    }
-    return nullptr;
-  }
-
-  const auto& intersections = std::get<osrm::json::Array>(intersections_iter->second);
-  if (intersection_index >= intersections.values.size()) {
-    if (error) {
-      *error = new osrmc_error{"IndexOutOfBounds", "Intersection index out of bounds"};
-    }
-    return nullptr;
-  }
-
-  return &std::get<osrm::json::Object>(intersections.values.at(intersection_index));
-}
-
-static const osrm::json::Array*
-osrmc_get_step_geometry_coordinates(const osrm::json::Object& step, osrmc_error_t* error) {
-  const auto geometry_iter = step.values.find("geometry");
-  if (geometry_iter == step.values.end()) {
-    if (error) {
-      *error = new osrmc_error{"NoGeometry", "Geometry not available for this step"};
-    }
-    return nullptr;
-  }
-
-  const auto& geometry = geometry_iter->second;
-
-  // Check if it's a polyline string
-  if (std::holds_alternative<osrm::json::String>(geometry)) {
-    if (error) {
-      *error =
-        new osrmc_error{"UnsupportedGeometry", "Step geometry is polyline string, use step_geometry_polyline instead"};
-    }
-    return nullptr;
-  }
-
-  // Check if it's GeoJSON coordinates array
-  if (std::holds_alternative<osrm::json::Object>(geometry)) {
-    const auto& geometry_obj = std::get<osrm::json::Object>(geometry);
-    const auto coordinates_iter = geometry_obj.values.find("coordinates");
-    if (coordinates_iter != geometry_obj.values.end()) {
-      return &std::get<osrm::json::Array>(coordinates_iter->second);
-    }
-  }
-
-  if (error) {
-    *error = new osrmc_error{"UnsupportedGeometry", "Only GeoJSON geometry format is supported for coordinate access"};
-  }
-  return nullptr;
-}
-
-static const osrm::json::Array*
-osrmc_get_route_geometry_coordinates(const osrm::json::Object& route, osrmc_error_t* error) {
-  const auto geometry_iter = route.values.find("geometry");
-  if (geometry_iter == route.values.end()) {
-    return nullptr;
-  }
-
-  const auto& geometry = geometry_iter->second;
-
-  if (std::holds_alternative<osrm::json::Object>(geometry)) {
-    const auto& geometry_obj = std::get<osrm::json::Object>(geometry);
-    const auto coordinates_iter = geometry_obj.values.find("coordinates");
-    if (coordinates_iter != geometry_obj.values.end()) {
-      return &std::get<osrm::json::Array>(coordinates_iter->second);
-    }
-  }
-
-  if (error) {
-    *error = new osrmc_error{"UnsupportedGeometry", "Only GeoJSON geometry format is supported"};
-  }
-  return nullptr;
 }
 
 
@@ -1305,15 +1080,11 @@ osrmc_nearest_response_destruct(osrmc_nearest_response_t response) {
 }
 
 osrmc_blob_t
-osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error) try {
-  if (!osrmc_validate_nearest_response(response, error)) {
-    return nullptr;
-  }
-  auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
-  return osrmc_render_json(*response_typed);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
+osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error) {
+  return osrmc_response_json_helper(
+    [response](osrmc_error_t* err) { return osrmc_validate_nearest_response(response, err); },
+    [response]() -> const osrm::json::Object& { return *reinterpret_cast<osrm::json::Object*>(response); },
+    error);
 }
 
 /* Route */
@@ -1356,56 +1127,22 @@ osrmc_route_params_set_alternatives(osrmc_route_params_t params, int on, osrmc_e
 }
 
 void
-osrmc_route_params_set_geometries(osrmc_route_params_t params,
-                                  osrmc_geometries_type_t geometries,
-                                  osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (geometries) {
-    case OSRMC_GEOMETRIES_POLYLINE:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline;
-      break;
-    case OSRMC_GEOMETRIES_POLYLINE6:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline6;
-      break;
-    case OSRMC_GEOMETRIES_GEOJSON:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown geometries type"};
-      }
-      return;
-  }
+osrmc_route_params_set_geometries(osrmc_route_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  osrmc_route_like_set_geometries(osrmc_route_like_params(params), geometries, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_route_params_set_overview(osrmc_route_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (overview) {
-    case OSRMC_OVERVIEW_SIMPLIFIED:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Simplified;
-      break;
-    case OSRMC_OVERVIEW_FULL:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Full;
-      break;
-    case OSRMC_OVERVIEW_FALSE:
-      params_typed->overview = osrm::RouteParameters::OverviewType::False;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown overview type"};
-      }
-      return;
-  }
+osrmc_route_params_set_overview(osrmc_route_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  osrmc_route_like_set_overview(osrmc_route_like_params(params), overview, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_route_params_set_continue_straight(osrmc_route_params_t params, int on, osrmc_error_t* error) try {
-  osrmc_route_like_set_continue_straight_impl(osrmc_route_like_params(params), on);
+  osrmc_route_like_set_continue_straight(osrmc_route_like_params(params), on);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -1419,25 +1156,23 @@ osrmc_route_params_set_number_of_alternatives(osrmc_route_params_t params, unsig
 
 void
 osrmc_route_params_set_annotations(osrmc_route_params_t params,
-                                   osrmc_annotations_type_t annotations,
+                                   route_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
-  params_typed->annotations = (annotations != OSRMC_ANNOTATIONS_NONE);
+  osrmc_route_like_set_annotations(osrmc_route_like_params(params), annotations);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_route_params_add_waypoint(osrmc_route_params_t params, size_t index, osrmc_error_t* error) try {
-  osrmc_route_like_add_waypoint_impl(osrmc_route_like_params(params), index);
+  osrmc_route_like_add_waypoint(osrmc_route_like_params(params), index);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_route_params_clear_waypoints(osrmc_route_params_t params) {
-  osrmc_route_like_clear_waypoints_impl(osrmc_route_like_params(params));
+  osrmc_route_like_clear_waypoints(osrmc_route_like_params(params));
 }
 
 osrmc_route_response_t
@@ -1455,17 +1190,13 @@ osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error
   const auto status = osrm_typed->Route(*params_typed, result);
 
   if (status == osrm::Status::Ok) {
-    auto* out = new osrmc_route_response;
-    out->geometries = params_typed->geometries;
-
     if (std::holds_alternative<osrm::json::Object>(result)) {
-      out->json = std::get<osrm::json::Object>(result);
+      auto* out = new osrm::json::Object(std::move(std::get<osrm::json::Object>(result)));
       return reinterpret_cast<osrmc_route_response_t>(out);
     } else {
       if (error) {
         *error = new osrmc_error{"InvalidResponse", "Unexpected response type"};
       }
-      delete out;
       return nullptr;
     }
   }
@@ -1486,20 +1217,16 @@ osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error
 void
 osrmc_route_response_destruct(osrmc_route_response_t response) {
   if (response) {
-    delete osrmc_get_route_response(response);
+    delete reinterpret_cast<osrm::json::Object*>(response);
   }
 }
 
 osrmc_blob_t
-osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error) try {
-  if (!osrmc_validate_route_response(response, error)) {
-    return nullptr;
-  }
-  auto* response_holder = osrmc_get_route_response(response);
-  return osrmc_render_json(response_holder->json);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
+osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error) {
+  return osrmc_response_json_helper(
+    [response](osrmc_error_t* err) { return osrmc_validate_route_response(response, err); },
+    [response]() -> const osrm::json::Object& { return *reinterpret_cast<osrm::json::Object*>(response); },
+    error);
 }
 
 /* Table */
@@ -1544,23 +1271,23 @@ osrmc_table_params_add_destination(osrmc_table_params_t params, size_t index, os
 
 void
 osrmc_table_params_set_annotations(osrmc_table_params_t params,
-                                   osrmc_table_annotations_type_t annotations,
+                                   table_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
   if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
   switch (annotations) {
-    case OSRMC_TABLE_ANNOTATIONS_NONE:
+    case TABLE_ANNOTATIONS_NONE:
       params_typed->annotations = osrm::TableParameters::AnnotationsType::None;
       break;
-    case OSRMC_TABLE_ANNOTATIONS_DURATION:
+    case TABLE_ANNOTATIONS_DURATION:
       params_typed->annotations = osrm::TableParameters::AnnotationsType::Duration;
       break;
-    case OSRMC_TABLE_ANNOTATIONS_DISTANCE:
+    case TABLE_ANNOTATIONS_DISTANCE:
       params_typed->annotations = osrm::TableParameters::AnnotationsType::Distance;
       break;
-    case OSRMC_TABLE_ANNOTATIONS_ALL:
+    case TABLE_ANNOTATIONS_ALL:
       params_typed->annotations = osrm::TableParameters::AnnotationsType::All;
       break;
     default:
@@ -1592,22 +1319,22 @@ osrmc_table_params_set_fallback_speed(osrmc_table_params_t params, double speed,
 
 void
 osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
-                                                osrmc_table_fallback_coordinate_type_t coord_type,
+                                                table_coordinate_type_t coord_type,
                                                 osrmc_error_t* error) try {
   if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
   switch (coord_type) {
-    case OSRMC_TABLE_FALLBACK_COORDINATE_INPUT:
+    case TABLE_COORDINATE_INPUT:
       params_typed->fallback_coordinate_type = osrm::TableParameters::FallbackCoordinateType::Input;
       break;
-    case OSRMC_TABLE_FALLBACK_COORDINATE_SNAPPED:
+    case TABLE_COORDINATE_SNAPPED:
       params_typed->fallback_coordinate_type = osrm::TableParameters::FallbackCoordinateType::Snapped;
       break;
     default:
       if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown fallback coordinate type"};
+        *error = new osrmc_error{"InvalidArgument", "Unknown table coordinate type"};
       }
       return;
   }
@@ -1679,15 +1406,11 @@ osrmc_table_response_destruct(osrmc_table_response_t response) {
 }
 
 osrmc_blob_t
-osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error) try {
-  if (!osrmc_validate_table_response(response, error)) {
-    return nullptr;
-  }
-  auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
-  return osrmc_render_json(*response_typed);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
+osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error) {
+  return osrmc_response_json_helper(
+    [response](osrmc_error_t* err) { return osrmc_validate_table_response(response, err); },
+    [response]() -> const osrm::json::Object& { return *reinterpret_cast<osrm::json::Object*>(response); },
+    error);
 }
 
 /* Match */
@@ -1729,56 +1452,22 @@ osrmc_match_params_set_alternatives(osrmc_match_params_t params, int on, osrmc_e
 }
 
 void
-osrmc_match_params_set_geometries(osrmc_match_params_t params,
-                                  osrmc_geometries_type_t geometries,
-                                  osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (geometries) {
-    case OSRMC_GEOMETRIES_POLYLINE:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline;
-      break;
-    case OSRMC_GEOMETRIES_POLYLINE6:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline6;
-      break;
-    case OSRMC_GEOMETRIES_GEOJSON:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown geometries type"};
-      }
-      return;
-  }
+osrmc_match_params_set_geometries(osrmc_match_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  osrmc_route_like_set_geometries(osrmc_route_like_params(params), geometries, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_match_params_set_overview(osrmc_match_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (overview) {
-    case OSRMC_OVERVIEW_SIMPLIFIED:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Simplified;
-      break;
-    case OSRMC_OVERVIEW_FULL:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Full;
-      break;
-    case OSRMC_OVERVIEW_FALSE:
-      params_typed->overview = osrm::RouteParameters::OverviewType::False;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown overview type"};
-      }
-      return;
-  }
+osrmc_match_params_set_overview(osrmc_match_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  osrmc_route_like_set_overview(osrmc_route_like_params(params), overview, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_match_params_set_continue_straight(osrmc_match_params_t params, int on, osrmc_error_t* error) try {
-  osrmc_route_like_set_continue_straight_impl(osrmc_route_like_params(params), on);
+  osrmc_route_like_set_continue_straight(osrmc_route_like_params(params), on);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -1792,25 +1481,23 @@ osrmc_match_params_set_number_of_alternatives(osrmc_match_params_t params, unsig
 
 void
 osrmc_match_params_set_annotations(osrmc_match_params_t params,
-                                   osrmc_annotations_type_t annotations,
+                                   route_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
-  params_typed->annotations = (annotations != OSRMC_ANNOTATIONS_NONE);
+  osrmc_route_like_set_annotations(osrmc_route_like_params(params), annotations);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_match_params_add_waypoint(osrmc_match_params_t params, size_t index, osrmc_error_t* error) try {
-  osrmc_route_like_add_waypoint_impl(osrmc_route_like_params(params), index);
+  osrmc_route_like_add_waypoint(osrmc_route_like_params(params), index);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_match_params_clear_waypoints(osrmc_match_params_t params) {
-  osrmc_route_like_clear_waypoints_impl(osrmc_route_like_params(params));
+  osrmc_route_like_clear_waypoints(osrmc_route_like_params(params));
 }
 
 void
@@ -1825,7 +1512,7 @@ osrmc_match_params_add_timestamp(osrmc_match_params_t params, unsigned timestamp
 }
 
 void
-osrmc_match_params_set_gaps(osrmc_match_params_t params, osrmc_match_gaps_type_t gaps, osrmc_error_t* error) try {
+osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps, osrmc_error_t* error) try {
   if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
     return;
   }
@@ -1893,15 +1580,11 @@ osrmc_match_response_destruct(osrmc_match_response_t response) {
 }
 
 osrmc_blob_t
-osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error) try {
-  if (!osrmc_validate_match_response(response, error)) {
-    return nullptr;
-  }
-  auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
-  return osrmc_render_json(*response_typed);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
+osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error) {
+  return osrmc_response_json_helper(
+    [response](osrmc_error_t* err) { return osrmc_validate_match_response(response, err); },
+    [response]() -> const osrm::json::Object& { return *reinterpret_cast<osrm::json::Object*>(response); },
+    error);
 }
 
 /* Trip */
@@ -1934,7 +1617,7 @@ osrmc_trip_params_set_roundtrip(osrmc_trip_params_t params, int on, osrmc_error_
 }
 
 void
-osrmc_trip_params_set_source(osrmc_trip_params_t params, osrmc_trip_source_type_t source, osrmc_error_t* error) try {
+osrmc_trip_params_set_source(osrmc_trip_params_t params, trip_source_type_t source, osrmc_error_t* error) try {
   if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
     return;
   }
@@ -1946,7 +1629,7 @@ osrmc_trip_params_set_source(osrmc_trip_params_t params, osrmc_trip_source_type_
 
 void
 osrmc_trip_params_set_destination(osrmc_trip_params_t params,
-                                  osrmc_trip_destination_type_t destination,
+                                  trip_destination_type_t destination,
                                   osrmc_error_t* error) try {
   if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
     return;
@@ -1978,56 +1661,22 @@ osrmc_trip_params_set_alternatives(osrmc_trip_params_t params, int on, osrmc_err
 }
 
 void
-osrmc_trip_params_set_geometries(osrmc_trip_params_t params,
-                                 osrmc_geometries_type_t geometries,
-                                 osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (geometries) {
-    case OSRMC_GEOMETRIES_POLYLINE:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline;
-      break;
-    case OSRMC_GEOMETRIES_POLYLINE6:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::Polyline6;
-      break;
-    case OSRMC_GEOMETRIES_GEOJSON:
-      params_typed->geometries = osrm::RouteParameters::GeometriesType::GeoJSON;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown geometries type"};
-      }
-      return;
-  }
+osrmc_trip_params_set_geometries(osrmc_trip_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  osrmc_route_like_set_geometries(osrmc_route_like_params(params), geometries, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_trip_params_set_overview(osrmc_trip_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  switch (overview) {
-    case OSRMC_OVERVIEW_SIMPLIFIED:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Simplified;
-      break;
-    case OSRMC_OVERVIEW_FULL:
-      params_typed->overview = osrm::RouteParameters::OverviewType::Full;
-      break;
-    case OSRMC_OVERVIEW_FALSE:
-      params_typed->overview = osrm::RouteParameters::OverviewType::False;
-      break;
-    default:
-      if (error) {
-        *error = new osrmc_error{"InvalidArgument", "Unknown overview type"};
-      }
-      return;
-  }
+osrmc_trip_params_set_overview(osrmc_trip_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  osrmc_route_like_set_overview(osrmc_route_like_params(params), overview, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_trip_params_set_continue_straight(osrmc_trip_params_t params, int on, osrmc_error_t* error) try {
-  osrmc_route_like_set_continue_straight_impl(osrmc_route_like_params(params), on);
+  osrmc_route_like_set_continue_straight(osrmc_route_like_params(params), on);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -2041,19 +1690,16 @@ osrmc_trip_params_set_number_of_alternatives(osrmc_trip_params_t params, unsigne
 
 void
 osrmc_trip_params_set_annotations(osrmc_trip_params_t params,
-                                  osrmc_annotations_type_t annotations,
+                                  route_annotations_type_t annotations,
                                   osrmc_error_t* error) try {
-  auto* params_typed = osrmc_route_like_params(params);
-  params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
-  params_typed->annotations = (annotations != OSRMC_ANNOTATIONS_NONE);
+  osrmc_route_like_set_annotations(osrmc_route_like_params(params), annotations);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
 osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params) {
-  auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
-  params_typed->waypoints.clear();
+  osrmc_route_like_clear_waypoints(osrmc_route_like_params(params));
 }
 
 void
@@ -2114,15 +1760,11 @@ osrmc_trip_response_destruct(osrmc_trip_response_t response) {
 }
 
 osrmc_blob_t
-osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error) try {
-  if (!osrmc_validate_trip_response(response, error)) {
-    return nullptr;
-  }
-  auto* response_typed = reinterpret_cast<osrm::json::Object*>(response);
-  return osrmc_render_json(*response_typed);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
+osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error) {
+  return osrmc_response_json_helper(
+    [response](osrmc_error_t* err) { return osrmc_validate_trip_response(response, err); },
+    [response]() -> const osrm::json::Object& { return *reinterpret_cast<osrm::json::Object*>(response); },
+    error);
 }
 
 /* Tile */
@@ -2146,8 +1788,12 @@ osrmc_tile_params_destruct(osrmc_tile_params_t params) {
   }
 }
 
-void
-osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* error) try {
+template<typename FieldType>
+static void
+osrmc_tile_params_set_field(osrmc_tile_params_t params,
+                            FieldType osrm::TileParameters::* field,
+                            FieldType value,
+                            osrmc_error_t* error) try {
   if (!params) {
     if (error) {
       *error = new osrmc_error{"InvalidArgument", "Params must not be null"};
@@ -2155,37 +1801,24 @@ osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* e
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
-  params_typed->x = x;
+  params_typed->*field = value;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* error) try {
-  if (!params) {
-    if (error) {
-      *error = new osrmc_error{"InvalidArgument", "Params must not be null"};
-    }
-    return;
-  }
-  auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
-  params_typed->y = y;
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
+osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* error) {
+  osrmc_tile_params_set_field(params, &osrm::TileParameters::x, x, error);
 }
 
 void
-osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error) try {
-  if (!params) {
-    if (error) {
-      *error = new osrmc_error{"InvalidArgument", "Params must not be null"};
-    }
-    return;
-  }
-  auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
-  params_typed->z = z;
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
+osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* error) {
+  osrmc_tile_params_set_field(params, &osrm::TileParameters::y, y, error);
+}
+
+void
+osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error) {
+  osrmc_tile_params_set_field(params, &osrm::TileParameters::z, z, error);
 }
 
 osrmc_tile_response_t

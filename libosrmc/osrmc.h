@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifndef OSRMC_H_
 #define OSRMC_H_
@@ -8,107 +9,48 @@
  * libosrmc Interface Overview
  * ===========================
  *
- * Workflow
- * --------
- *
  * Services: Nearest, Route, Table, Match, Trip, Tile
  *
- * 1. Create config with base path (or NULL for shared memory via osrm-datastore)
- * 2. Optionally configure algorithm and constraints
- * 3. Construct OSRM instance
- * 4. Create service-specific params, add coordinates, configure options
- * 5. Query service and extract results
- *
- * Example:
- *
- *   osrmc_config_t config = osrmc_config_construct(path, &error);
- *   osrmc_osrm_t osrm = osrmc_osrm_construct(config, &error);
- *
- *
- * Algorithm Selection
- * -------------------
- *
- * Default: CH (Contraction Hierarchies)
- * Alternative: MLD (Multi-Level Dijkstra)
- *
- *   osrmc_config_set_algorithm(config, OSRMC_ALGORITHM_MLD, &error);
- *
- *
- * Service Constraints
- * -------------------
- *
- * Set limits via osrmc_config_set_* functions. Use -1 for unlimited.
- *
- * - max_locations_trip: Trip service locations (default: -1)
- * - max_locations_viaroute: Route service locations (default: -1)
- * - max_locations_distance_table: Table service locations (default: -1)
- * - max_locations_map_matching: Match service locations (default: -1)
- * - max_radius_map_matching: Map matching radius in meters (default: -1.0)
- * - max_results_nearest: Nearest service results (default: -1)
- * - default_radius: Coordinate snapping radius in meters (default: -1.0)
- * - max_alternatives: Alternative routes (default: 3)
- *
- *
- * Querying Services
- * -----------------
- *
- * 1. Create params: osrmc_service_params_construct
- * 2. Add coordinates: osrmc_params_add_coordinate (or osrmc_params_add_coordinate_with)
- * 3. Configure options: service-specific setters
- * 4. Query: osrmc_service(osrm, params, &error)
- * 5. Extract results: osrmc_service_response_* getters
- * 6. Cleanup: osrmc_service_response_destruct
- *
- * Example:
- *
- *   osrmc_route_params_t params = osrmc_route_params_construct(&error);
- *   osrmc_params_add_coordinate((osrmc_params_t)params, lon, lat, &error);
- *   osrmc_route_params_set_alternatives(params, 1, &error);
- *   osrmc_route_response_t response = osrmc_route(osrm, params, &error);
- *   double distance = osrmc_route_response_distance(response, &error);
- *   osrmc_route_response_destruct(response);
- *
- *
- * Types
- * -----
- *
- * Opaque types with osrmc_type_construct/destruct naming convention.
- *
- *
- * Error Handling
- * --------------
- *
- * Functions take osrmc_error_t* out parameter. On failure:
- * - Error object is populated (caller owns it)
- * - Get message via osrmc_error_message
- * - Destruct via osrmc_error_destruct
+ * Basic Workflow:
+ * 1. Create config: osrmc_config_construct(path, &error)
+ * 2. Construct OSRM: osrmc_osrm_construct(config, &error)
+ * 3. Create params: osrmc_service_params_construct(&error)
+ * 4. Add coordinates: osrmc_params_add_coordinate(params, lon, lat, &error)
+ * 5. Query service: osrmc_service(osrm, params, &error)
+ * 6. Get JSON blob: osrmc_service_response_json(response, &error)
+ * 7. Cleanup: osrmc_blob_destruct(blob), osrmc_service_response_destruct(response)
  *
  * Example:
  *
  *   osrmc_error_t error = NULL;
- *   params = osrmc_route_params_construct(&error);
+ *   osrmc_config_t config = osrmc_config_construct(path, &error);
+ *   osrmc_osrm_t osrm = osrmc_osrm_construct(config, &error);
+ *   osrmc_route_params_t params = osrmc_route_params_construct(&error);
+ *   osrmc_params_add_coordinate((osrmc_params_t)params, lon, lat, &error);
+ *   osrmc_route_response_t response = osrmc_route(osrm, params, &error);
+ *   if (!error && response) {
+ *     osrmc_blob_t json_blob = osrmc_route_response_json(response, &error);
+ *     if (json_blob) {
+ *       const char* json_data = osrmc_blob_data(json_blob);
+ *       size_t json_size = osrmc_blob_size(json_blob);
+ *       // Use json_data (valid until osrmc_blob_destruct)
+ *       osrmc_blob_destruct(json_blob);
+ *     }
+ *     osrmc_route_response_destruct(response);
+ *   }
  *   if (error) {
  *     fprintf(stderr, "Error: %s\n", osrmc_error_message(error));
  *     osrmc_error_destruct(error);
- *     return EXIT_FAILURE;
  *   }
  *
+ * Error Handling:
+ * Functions take osrmc_error_t* out parameter. Check error after each call.
+ * Get message via osrmc_error_message(), destruct via osrmc_error_destruct().
  *
- * Response String Pointers
- * ------------------------
- *
- * Functions returning const char* (name, hint, data_version, etc.) return pointers
- * to internal response data. Valid only while response exists. Do not free.
- * Returns nullptr if field is missing.
- *
- * Example:
- *
- *   const char* name = osrmc_route_response_waypoint_name(response, 0, &error);
- *   if (name) {
- *     printf("Name: %s\n", name);  // Valid while response exists
- *   }
- *   osrmc_route_response_destruct(response);
- *   // name pointer invalid after this point
+ * Response Data:
+ * JSON services return osrmc_blob_t via *_response_json(). Access data via
+ * osrmc_blob_data() and size via osrmc_blob_size(). Tile service uses
+ * osrmc_tile_response_data() and osrmc_tile_response_size() for binary data.
  *
  */
 
@@ -134,6 +76,7 @@ OSRMC_API int
 osrmc_is_abi_compatible(void);
 
 /* Types */
+
 /* Error */
 typedef struct osrmc_error* osrmc_error_t;
 /* Config*/
@@ -168,71 +111,59 @@ typedef struct osrmc_trip_response* osrmc_trip_response_t;
 typedef struct osrmc_tile_params* osrmc_tile_params_t;
 typedef struct osrmc_tile_response* osrmc_tile_response_t;
 
-/* Enums*/
+/* Enums */
 
 /* Output formats */
 /* NOTE: Flatbuffers format is not supported */
-typedef enum {
-  OSRMC_FORMAT_JSON = 0,
-} osrmc_output_format_t;
+typedef enum { FORMAT_JSON = 0 } output_format_t;
 
 /* Algorithms */
-typedef enum {
-  OSRMC_ALGORITHM_CH = 0, /* Contraction Hierarchies (default) */
-  OSRMC_ALGORITHM_MLD = 1 /* Multi-Level Dijkstra */
-} osrmc_algorithm_t;
+typedef enum { ALGORITHM_CH = 0, ALGORITHM_MLD = 1 } algorithm_t;
 
 /* Snapping */
-typedef enum { OSRMC_SNAPPING_DEFAULT = 0, OSRMC_SNAPPING_ANY = 1 } osrmc_snapping_t;
+typedef enum { SNAPPING_DEFAULT = 0, SNAPPING_ANY = 1 } snapping_t;
 
 /* Approach */
-typedef enum { OSRMC_APPROACH_CURB = 0, OSRMC_APPROACH_UNRESTRICTED = 1, OSRMC_APPROACH_OPPOSITE = 2 } osrmc_approach_t;
+typedef enum { APPROACH_CURB = 0, APPROACH_UNRESTRICTED = 1, APPROACH_OPPOSITE = 2 } approach_t;
 
 /* Geometries */
-typedef enum {
-  OSRMC_GEOMETRIES_POLYLINE = 0,
-  OSRMC_GEOMETRIES_POLYLINE6 = 1,
-  OSRMC_GEOMETRIES_GEOJSON = 2
-} osrmc_geometries_type_t;
+typedef enum { GEOMETRIES_POLYLINE = 0, GEOMETRIES_POLYLINE6 = 1, GEOMETRIES_GEOJSON = 2 } geometries_type_t;
 
 /* Overviews */
-typedef enum { OSRMC_OVERVIEW_SIMPLIFIED = 0, OSRMC_OVERVIEW_FULL = 1, OSRMC_OVERVIEW_FALSE = 2 } osrmc_overview_type_t;
+typedef enum { OVERVIEW_SIMPLIFIED = 0, OVERVIEW_FULL = 1, OVERVIEW_FALSE = 2 } overview_type_t;
 
 /* Annotations */
-typedef enum {
-  OSRMC_ANNOTATIONS_NONE = 0,
-  OSRMC_ANNOTATIONS_DURATION = 1,
-  OSRMC_ANNOTATIONS_NODES = 2,
-  OSRMC_ANNOTATIONS_DISTANCE = 4,
-  OSRMC_ANNOTATIONS_WEIGHT = 8,
-  OSRMC_ANNOTATIONS_DATASOURCES = 16,
-  OSRMC_ANNOTATIONS_SPEED = 32,
-  OSRMC_ANNOTATIONS_ALL = 63
-} osrmc_annotations_type_t;
+typedef enum : uint8_t {
+  ROUTE_ANNOTATIONS_NONE = 0x00,
+  ROUTE_ANNOTATIONS_DURATION = 0x01,
+  ROUTE_ANNOTATIONS_NODES = 0x02,
+  ROUTE_ANNOTATIONS_DISTANCE = 0x04,
+  ROUTE_ANNOTATIONS_WEIGHT = 0x08,
+  ROUTE_ANNOTATIONS_DATASOURCES = 0x10,
+  ROUTE_ANNOTATIONS_SPEED = 0x20,
+  ROUTE_ANNOTATIONS_ALL = ROUTE_ANNOTATIONS_DURATION | ROUTE_ANNOTATIONS_NODES | ROUTE_ANNOTATIONS_DISTANCE |
+                          ROUTE_ANNOTATIONS_WEIGHT | ROUTE_ANNOTATIONS_DATASOURCES | ROUTE_ANNOTATIONS_SPEED
+} route_annotations_type_t;
 
 /* Table annotations */
-typedef enum {
-  OSRMC_TABLE_ANNOTATIONS_NONE = 0,
-  OSRMC_TABLE_ANNOTATIONS_DURATION = 1,
-  OSRMC_TABLE_ANNOTATIONS_DISTANCE = 2,
-  OSRMC_TABLE_ANNOTATIONS_ALL = 3
-} osrmc_table_annotations_type_t;
+typedef enum : uint8_t {
+  TABLE_ANNOTATIONS_NONE = 0x00,
+  TABLE_ANNOTATIONS_DURATION = 0x01,
+  TABLE_ANNOTATIONS_DISTANCE = 0x02,
+  TABLE_ANNOTATIONS_ALL = TABLE_ANNOTATIONS_DURATION | TABLE_ANNOTATIONS_DISTANCE
+} table_annotations_type_t;
 
 /* Table fallback coordinate*/
-typedef enum {
-  OSRMC_TABLE_FALLBACK_COORDINATE_INPUT = 0,
-  OSRMC_TABLE_FALLBACK_COORDINATE_SNAPPED = 1
-} osrmc_table_fallback_coordinate_type_t;
+typedef enum { TABLE_COORDINATE_INPUT = 0, TABLE_COORDINATE_SNAPPED = 1 } table_coordinate_type_t;
 
 /* Match gaps */
-typedef enum { OSRMC_MATCH_GAPS_SPLIT = 0, OSRMC_MATCH_GAPS_IGNORE = 1 } osrmc_match_gaps_type_t;
+typedef enum { MATCH_GAPS_SPLIT = 0, MATCH_GAPS_IGNORE = 1 } match_gaps_type_t;
 
 /* Trip source */
-typedef enum { OSRMC_TRIP_SOURCE_ANY = 0, OSRMC_TRIP_SOURCE_FIRST = 1 } osrmc_trip_source_type_t;
+typedef enum { TRIP_SOURCE_ANY = 0, TRIP_SOURCE_FIRST = 1 } trip_source_type_t;
 
 /* Trip destination */
-typedef enum { OSRMC_TRIP_DESTINATION_ANY = 0, OSRMC_TRIP_DESTINATION_LAST = 1 } osrmc_trip_destination_type_t;
-
+typedef enum { TRIP_DESTINATION_ANY = 0, TRIP_DESTINATION_LAST = 1 } trip_destination_type_t;
 
 /* Error*/
 
@@ -276,7 +207,7 @@ osrmc_config_set_memory_file(osrmc_config_t config, const char* memory_file, osr
 OSRMC_API void
 osrmc_config_set_use_mmap(osrmc_config_t config, bool use_mmap, osrmc_error_t* error);
 OSRMC_API void
-osrmc_config_set_algorithm(osrmc_config_t config, osrmc_algorithm_t algorithm, osrmc_error_t* error);
+osrmc_config_set_algorithm(osrmc_config_t config, algorithm_t algorithm, osrmc_error_t* error);
 OSRMC_API void
 osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_name, osrmc_error_t* error);
 OSRMC_API void
@@ -311,10 +242,7 @@ osrmc_params_set_radius(osrmc_params_t params, size_t coordinate_index, double r
 OSRMC_API void
 osrmc_params_set_bearing(osrmc_params_t params, size_t coordinate_index, int value, int range, osrmc_error_t* error);
 OSRMC_API void
-osrmc_params_set_approach(osrmc_params_t params,
-                          size_t coordinate_index,
-                          osrmc_approach_t approach,
-                          osrmc_error_t* error);
+osrmc_params_set_approach(osrmc_params_t params, size_t coordinate_index, approach_t approach, osrmc_error_t* error);
 OSRMC_API void
 osrmc_params_add_exclude(osrmc_params_t params, const char* exclude_profile, osrmc_error_t* error);
 OSRMC_API void
@@ -322,9 +250,9 @@ osrmc_params_set_generate_hints(osrmc_params_t params, int on, osrmc_error_t* er
 OSRMC_API void
 osrmc_params_set_skip_waypoints(osrmc_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
-osrmc_params_set_snapping(osrmc_params_t params, osrmc_snapping_t snapping, osrmc_error_t* error);
+osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_error_t* error);
 OSRMC_API void
-osrmc_params_set_format(osrmc_params_t params, osrmc_output_format_t format, osrmc_error_t* error);
+osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_error_t* error);
 /* OSRM response blob accessors*/
 OSRMC_API const char*
 osrmc_blob_data(osrmc_blob_t blob);
@@ -365,18 +293,16 @@ osrmc_route_params_set_steps(osrmc_route_params_t params, int on, osrmc_error_t*
 OSRMC_API void
 osrmc_route_params_set_alternatives(osrmc_route_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
-osrmc_route_params_set_geometries(osrmc_route_params_t params,
-                                  osrmc_geometries_type_t geometries,
-                                  osrmc_error_t* error);
+osrmc_route_params_set_geometries(osrmc_route_params_t params, geometries_type_t geometries, osrmc_error_t* error);
 OSRMC_API void
-osrmc_route_params_set_overview(osrmc_route_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error);
+osrmc_route_params_set_overview(osrmc_route_params_t params, overview_type_t overview, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_set_continue_straight(osrmc_route_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_set_number_of_alternatives(osrmc_route_params_t params, unsigned count, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_set_annotations(osrmc_route_params_t params,
-                                   osrmc_annotations_type_t annotations,
+                                   route_annotations_type_t annotations,
                                    osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_add_waypoint(osrmc_route_params_t params, size_t index, osrmc_error_t* error);
@@ -405,13 +331,13 @@ OSRMC_API void
 osrmc_table_params_add_destination(osrmc_table_params_t params, size_t index, osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_set_annotations(osrmc_table_params_t params,
-                                   osrmc_table_annotations_type_t annotations,
+                                   table_annotations_type_t annotations,
                                    osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_set_fallback_speed(osrmc_table_params_t params, double speed, osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
-                                                osrmc_table_fallback_coordinate_type_t coord_type,
+                                                table_coordinate_type_t coord_type,
                                                 osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_set_scale_factor(osrmc_table_params_t params, double scale_factor, osrmc_error_t* error);
@@ -437,18 +363,16 @@ osrmc_match_params_set_steps(osrmc_match_params_t params, int on, osrmc_error_t*
 OSRMC_API void
 osrmc_match_params_set_alternatives(osrmc_match_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
-osrmc_match_params_set_geometries(osrmc_match_params_t params,
-                                  osrmc_geometries_type_t geometries,
-                                  osrmc_error_t* error);
+osrmc_match_params_set_geometries(osrmc_match_params_t params, geometries_type_t geometries, osrmc_error_t* error);
 OSRMC_API void
-osrmc_match_params_set_overview(osrmc_match_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error);
+osrmc_match_params_set_overview(osrmc_match_params_t params, overview_type_t overview, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_set_continue_straight(osrmc_match_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_set_number_of_alternatives(osrmc_match_params_t params, unsigned count, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_set_annotations(osrmc_match_params_t params,
-                                   osrmc_annotations_type_t annotations,
+                                   route_annotations_type_t annotations,
                                    osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_add_waypoint(osrmc_match_params_t params, size_t index, osrmc_error_t* error);
@@ -457,7 +381,7 @@ osrmc_match_params_clear_waypoints(osrmc_match_params_t params);
 OSRMC_API void
 osrmc_match_params_add_timestamp(osrmc_match_params_t params, unsigned timestamp, osrmc_error_t* error);
 OSRMC_API void
-osrmc_match_params_set_gaps(osrmc_match_params_t params, osrmc_match_gaps_type_t gaps, osrmc_error_t* error);
+osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_set_tidy(osrmc_match_params_t params, int on, osrmc_error_t* error);
 /* Match response constructor and destructor */
@@ -480,26 +404,26 @@ osrmc_trip_params_destruct(osrmc_trip_params_t params);
 OSRMC_API void
 osrmc_trip_params_set_roundtrip(osrmc_trip_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
-osrmc_trip_params_set_source(osrmc_trip_params_t params, osrmc_trip_source_type_t source, osrmc_error_t* error);
+osrmc_trip_params_set_source(osrmc_trip_params_t params, trip_source_type_t source, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_destination(osrmc_trip_params_t params,
-                                  osrmc_trip_destination_type_t destination,
+                                  trip_destination_type_t destination,
                                   osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_steps(osrmc_trip_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_alternatives(osrmc_trip_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
-osrmc_trip_params_set_geometries(osrmc_trip_params_t params, osrmc_geometries_type_t geometries, osrmc_error_t* error);
+osrmc_trip_params_set_geometries(osrmc_trip_params_t params, geometries_type_t geometries, osrmc_error_t* error);
 OSRMC_API void
-osrmc_trip_params_set_overview(osrmc_trip_params_t params, osrmc_overview_type_t overview, osrmc_error_t* error);
+osrmc_trip_params_set_overview(osrmc_trip_params_t params, overview_type_t overview, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_continue_straight(osrmc_trip_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_number_of_alternatives(osrmc_trip_params_t params, unsigned count, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_set_annotations(osrmc_trip_params_t params,
-                                  osrmc_annotations_type_t annotations,
+                                  route_annotations_type_t annotations,
                                   osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params);
