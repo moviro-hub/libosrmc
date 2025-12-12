@@ -48,7 +48,7 @@ osrmc_is_abi_compatible(void) {
   return osrmc_get_version() >> 16u == OSRMC_VERSION_MAJOR;
 }
 
-/* API */
+/* Internal structures */
 
 struct osrmc_error final {
   std::string code;
@@ -63,10 +63,23 @@ struct osrmc_response final {
   osrm::engine::api::ResultT result;
 };
 
+/* JSON renderer */
+
 // Minimal JSON renderer using only public osrm::json API
 namespace osrmc_json {
   void osrmc_json_escape_string(std::string& out, std::string_view value) {
+    constexpr const char hex[] = "0123456789abcdef";
+
     for (const unsigned char ch : value) {
+      // Handle control characters (< 0x20) with Unicode escape
+      if (ch < 0x20) {
+        out += "\\u00";
+        out.push_back(hex[(ch >> 4) & 0x0F]);
+        out.push_back(hex[ch & 0x0F]);
+        continue;
+      }
+
+      // Handle special characters that need escaping
       switch (ch) {
         case '"':
           out += "\\\"";
@@ -90,15 +103,7 @@ namespace osrmc_json {
           out += "\\t";
           break;
         default:
-          if (ch < 0x20) {
-            // Control characters: escape as \u00XX
-            constexpr char hex[] = "0123456789abcdef";
-            out += "\\u00";
-            out.push_back(hex[(ch >> 4) & 0x0F]);
-            out.push_back(hex[ch & 0x0F]);
-          } else {
-            out.push_back(static_cast<char>(ch));
-          }
+          out.push_back(static_cast<char>(ch));
           break;
       }
     }
@@ -157,8 +162,10 @@ namespace osrmc_json {
   };
 } // namespace osrmc_json
 
-/* Error handling */
 
+/* Helpers */
+
+// Error helpers
 static void
 osrmc_set_error(osrmc_error_t* error, const char* code, const char* message) {
   if (error) {
@@ -166,181 +173,9 @@ osrmc_set_error(osrmc_error_t* error, const char* code, const char* message) {
   }
 }
 
-static bool
-osrmc_validate_config(osrmc_config_t config, osrmc_error_t* error) {
-  if (!config) {
-    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
-    return false;
-  }
-  return true;
-}
-
-static bool
-osrmc_validate_params(osrmc_params_t params, osrmc_error_t* error) {
-  if (!params) {
-    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
-    return false;
-  }
-  return true;
-}
-
-static bool
-osrmc_validate_osrm(osrmc_osrm_t osrm, osrmc_error_t* error) {
-  if (!osrm) {
-    osrmc_set_error(error, "InvalidArgument", "OSRM instance must not be null");
-    return false;
-  }
-  return true;
-}
-
 static void
 osrmc_error_from_exception(const std::exception& e, osrmc_error_t* error) {
   osrmc_set_error(error, "Exception", e.what());
-}
-
-static void
-osrmc_error_from_json(osrm::json::Object& json, osrmc_error_t* error) try {
-  if (!error) {
-    return;
-  }
-  auto code = std::get<osrm::json::String>(json.values["code"]).value;
-  auto message = std::get<osrm::json::String>(json.values["message"]).value;
-  if (code.empty()) {
-    code = "Unknown";
-  }
-
-  osrmc_set_error(error, code.c_str(), message.c_str());
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-}
-
-template<typename T>
-static bool
-osrmc_validate_coordinate_index(const T& params, size_t coordinate_index, const char* parameter, osrmc_error_t* error) {
-  if (coordinate_index >= params.coordinates.size()) {
-    const std::string message = std::string(parameter) + " index out of bounds";
-    osrmc_set_error(error, "InvalidCoordinateIndex", message.c_str());
-    return false;
-  }
-  return true;
-}
-
-template<typename Container>
-static void
-osrmc_ensure_container_size(Container& container, size_t size) {
-  if (container.size() < size) {
-    container.resize(size);
-  }
-}
-
-static std::string
-osrmc_to_lower(std::string value) {
-  std::transform(
-    value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-  return value;
-}
-
-static std::optional<osrm::storage::FeatureDataset>
-osrmc_feature_dataset_from_string(const std::string& name) {
-  const auto lower = osrmc_to_lower(name);
-  if (lower == "route_steps") {
-    return osrm::storage::FeatureDataset::ROUTE_STEPS;
-  }
-  if (lower == "route_geometry") {
-    return osrm::storage::FeatureDataset::ROUTE_GEOMETRY;
-  }
-  return std::nullopt;
-}
-
-static osrmc_blob_t
-osrmc_render_json(const osrm::json::Object& object) {
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(object);
-  return reinterpret_cast<osrmc_blob_t>(blob);
-}
-
-// Convert opaque handle to internal response pointer
-template<typename ResponseHandle>
-static osrmc_response*
-osrmc_get_response(ResponseHandle response) {
-  return reinterpret_cast<osrmc_response*>(response);
-}
-
-template<typename ResponseHandle>
-static void
-osrmc_response_destruct(ResponseHandle response) {
-  if (response) {
-    delete osrmc_get_response(response);
-  }
-}
-
-template<typename ResponseHandle>
-static osrmc_blob_t
-osrmc_response_flatbuffer_helper(ResponseHandle response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = osrmc_get_response(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-template<typename ParamsHandle, typename ParamsType, typename ResponseHandle, typename MethodFunc>
-static ResponseHandle
-osrmc_service_helper(osrmc_osrm_t osrm,
-                     ParamsHandle params,
-                     MethodFunc method,
-                     const char* error_name,
-                     osrmc_error_t* error) try {
-  if (!osrmc_validate_osrm(osrm, error) || !params) {
-    if (!params) {
-      osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
-    }
-    return nullptr;
-  }
-  auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
-  auto* params_typed = reinterpret_cast<ParamsType*>(params);
-
-  osrm::engine::api::ResultT result = osrm::json::Object();
-  const auto status = method(*osrm_typed, *params_typed, result);
-
-  if (status == osrm::Status::Ok) {
-    auto* out = new osrmc_response{std::move(result)};
-    return reinterpret_cast<ResponseHandle>(out);
-  }
-
-  // Extract error from JSON response, fallback to generic error
-  try {
-    osrmc_error_from_json(std::get<osrm::json::Object>(result), error);
-  } catch (...) {
-    osrmc_set_error(error, error_name, "Request failed");
-  }
-  return nullptr;
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-template<typename ResponseHandle>
-static osrmc_blob_t
-osrmc_response_json_helper(ResponseHandle response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = osrmc_get_response(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  return osrmc_render_json(json_obj);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
 }
 
 const char*
@@ -357,6 +192,77 @@ void
 osrmc_error_destruct(osrmc_error_t error) {
   if (error) {
     delete error;
+  }
+}
+
+// Service helpers
+template<typename ParamsHandle, typename ParamsType, typename ResponseHandle, typename MethodFunc>
+static ResponseHandle
+osrmc_service_helper(osrmc_osrm_t osrm,
+                     ParamsHandle params,
+                     MethodFunc method,
+                     const char* error_name,
+                     osrmc_error_t* error) try {
+  if (!osrm) {
+    osrmc_set_error(error, "InvalidArgument", "OSRM instance must not be null");
+    return nullptr;
+  }
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
+    return nullptr;
+  }
+  auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
+  auto* params_typed = reinterpret_cast<ParamsType*>(params);
+
+  osrm::engine::api::ResultT result = osrm::json::Object();
+  const auto status = method(*osrm_typed, *params_typed, result);
+
+  if (status == osrm::Status::Ok) {
+    auto* out = new osrmc_response{std::move(result)};
+    return reinterpret_cast<ResponseHandle>(out);
+  }
+
+  // Extract error from JSON response, fallback to generic error
+  try {
+    if (error) {
+      auto& json = std::get<osrm::json::Object>(result);
+      auto code = std::get<osrm::json::String>(json.values["code"]).value;
+      auto message = std::get<osrm::json::String>(json.values["message"]).value;
+      if (code.empty()) {
+        code = "Unknown";
+      }
+      osrmc_set_error(error, code.c_str(), message.c_str());
+    }
+  } catch (...) {
+    osrmc_set_error(error, error_name, "Request failed");
+  }
+  return nullptr;
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+// JSON helpers
+const char*
+osrmc_blob_data(osrmc_blob_t blob) {
+  if (!blob) {
+    return nullptr;
+  }
+  return reinterpret_cast<osrmc_blob*>(blob)->data.c_str();
+}
+
+size_t
+osrmc_blob_size(osrmc_blob_t blob) {
+  if (!blob) {
+    return 0;
+  }
+  return reinterpret_cast<osrmc_blob*>(blob)->data.size();
+}
+
+void
+osrmc_blob_destruct(osrmc_blob_t blob) {
+  if (blob) {
+    delete reinterpret_cast<osrmc_blob*>(blob);
   }
 }
 
@@ -388,7 +294,8 @@ osrmc_config_destruct(osrmc_config_t config) {
 
 void
 osrmc_config_set_max_locations_trip(osrmc_config_t config, int max_locations, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -399,7 +306,8 @@ osrmc_config_set_max_locations_trip(osrmc_config_t config, int max_locations, os
 
 void
 osrmc_config_set_max_locations_viaroute(osrmc_config_t config, int max_locations, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -410,7 +318,8 @@ osrmc_config_set_max_locations_viaroute(osrmc_config_t config, int max_locations
 
 void
 osrmc_config_set_max_locations_distance_table(osrmc_config_t config, int max_locations, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -421,7 +330,8 @@ osrmc_config_set_max_locations_distance_table(osrmc_config_t config, int max_loc
 
 void
 osrmc_config_set_max_locations_map_matching(osrmc_config_t config, int max_locations, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -432,7 +342,8 @@ osrmc_config_set_max_locations_map_matching(osrmc_config_t config, int max_locat
 
 void
 osrmc_config_set_max_radius_map_matching(osrmc_config_t config, double max_radius, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -443,7 +354,8 @@ osrmc_config_set_max_radius_map_matching(osrmc_config_t config, double max_radiu
 
 void
 osrmc_config_set_max_results_nearest(osrmc_config_t config, int max_results, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -454,7 +366,8 @@ osrmc_config_set_max_results_nearest(osrmc_config_t config, int max_results, osr
 
 void
 osrmc_config_set_default_radius(osrmc_config_t config, double default_radius, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -465,7 +378,8 @@ osrmc_config_set_default_radius(osrmc_config_t config, double default_radius, os
 
 void
 osrmc_config_set_max_alternatives(osrmc_config_t config, int max_alternatives, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -476,7 +390,8 @@ osrmc_config_set_max_alternatives(osrmc_config_t config, int max_alternatives, o
 
 void
 osrmc_config_set_use_shared_memory(osrmc_config_t config, bool use_shared_memory, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -487,7 +402,8 @@ osrmc_config_set_use_shared_memory(osrmc_config_t config, bool use_shared_memory
 
 void
 osrmc_config_set_memory_file(osrmc_config_t config, const char* memory_file, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -502,7 +418,8 @@ osrmc_config_set_memory_file(osrmc_config_t config, const char* memory_file, osr
 
 void
 osrmc_config_set_use_mmap(osrmc_config_t config, bool use_mmap, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -513,7 +430,8 @@ osrmc_config_set_use_mmap(osrmc_config_t config, bool use_mmap, osrmc_error_t* e
 
 void
 osrmc_config_set_algorithm(osrmc_config_t config, algorithm_t algorithm, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -533,20 +451,10 @@ osrmc_config_set_algorithm(osrmc_config_t config, algorithm_t algorithm, osrmc_e
   osrmc_error_from_exception(e, error);
 }
 
-// Rebuild storage config after dataset changes
-static void
-osrmc_refresh_storage_config_for_datasets(osrm::EngineConfig* config_typed) {
-  const auto base_path = config_typed->storage_config.base_path;
-  if (!base_path.empty()) {
-    config_typed->storage_config = osrm::StorageConfig(base_path, config_typed->disable_feature_dataset);
-  } else {
-    config_typed->storage_config = osrm::StorageConfig(config_typed->disable_feature_dataset);
-  }
-}
-
 void
 osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_name, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   if (!dataset_name) {
@@ -555,7 +463,17 @@ osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_
   }
 
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
-  const auto dataset = osrmc_feature_dataset_from_string(dataset_name);
+  // Convert to lowercase and check dataset name
+  std::string lower_name = dataset_name;
+  std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  std::optional<osrm::storage::FeatureDataset> dataset;
+  if (lower_name == "route_steps") {
+    dataset = osrm::storage::FeatureDataset::ROUTE_STEPS;
+  } else if (lower_name == "route_geometry") {
+    dataset = osrm::storage::FeatureDataset::ROUTE_GEOMETRY;
+  }
   if (!dataset) {
     osrmc_set_error(error, "InvalidDataset", "Unknown dataset");
     return;
@@ -566,7 +484,12 @@ osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_
     config_typed->disable_feature_dataset.end();
   if (!exists) {
     config_typed->disable_feature_dataset.push_back(*dataset);
-    osrmc_refresh_storage_config_for_datasets(config_typed);
+    const auto base_path = config_typed->storage_config.base_path;
+    if (!base_path.empty()) {
+      config_typed->storage_config = osrm::StorageConfig(base_path, config_typed->disable_feature_dataset);
+    } else {
+      config_typed->storage_config = osrm::StorageConfig(config_typed->disable_feature_dataset);
+    }
   }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -574,7 +497,8 @@ osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_
 
 void
 osrmc_config_set_verbosity(osrmc_config_t config, const char* verbosity, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -585,7 +509,8 @@ osrmc_config_set_verbosity(osrmc_config_t config, const char* verbosity, osrmc_e
 
 void
 osrmc_config_set_dataset_name(osrmc_config_t config, const char* dataset_name, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
@@ -596,12 +521,18 @@ osrmc_config_set_dataset_name(osrmc_config_t config, const char* dataset_name, o
 
 void
 osrmc_config_clear_disabled_feature_datasets(osrmc_config_t config, osrmc_error_t* error) try {
-  if (!osrmc_validate_config(config, error)) {
+  if (!config) {
+    osrmc_set_error(error, "InvalidArgument", "Config must not be null");
     return;
   }
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
   config_typed->disable_feature_dataset.clear();
-  osrmc_refresh_storage_config_for_datasets(config_typed);
+  const auto base_path = config_typed->storage_config.base_path;
+  if (!base_path.empty()) {
+    config_typed->storage_config = osrm::StorageConfig(base_path, config_typed->disable_feature_dataset);
+  } else {
+    config_typed->storage_config = osrm::StorageConfig(config_typed->disable_feature_dataset);
+  }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -632,7 +563,8 @@ osrmc_osrm_destruct(osrmc_osrm_t osrm) {
 
 void
 osrmc_params_add_coordinate(osrmc_params_t params, double longitude, double latitude, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -650,7 +582,8 @@ osrmc_params_add_coordinate_with(osrmc_params_t params,
                                  int bearing,
                                  int range,
                                  osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -667,15 +600,20 @@ osrmc_params_set_hint(osrmc_params_t params,
                       size_t coordinate_index,
                       const char* hint_base64,
                       osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  if (!osrmc_validate_coordinate_index(*params_typed, coordinate_index, "Hint", error)) {
+  if (coordinate_index >= params_typed->coordinates.size()) {
+    const std::string message = std::string("Hint") + " index out of bounds";
+    osrmc_set_error(error, "InvalidCoordinateIndex", message.c_str());
     return;
   }
 
-  osrmc_ensure_container_size(params_typed->hints, params_typed->coordinates.size());
+  if (params_typed->hints.size() < params_typed->coordinates.size()) {
+    params_typed->hints.resize(params_typed->coordinates.size());
+  }
   if (hint_base64) {
     auto hint = osrm::engine::Hint::FromBase64(hint_base64);
     params_typed->hints[coordinate_index] = std::move(hint);
@@ -688,15 +626,20 @@ osrmc_params_set_hint(osrmc_params_t params,
 
 void
 osrmc_params_set_radius(osrmc_params_t params, size_t coordinate_index, double radius, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  if (!osrmc_validate_coordinate_index(*params_typed, coordinate_index, "Radius", error)) {
+  if (coordinate_index >= params_typed->coordinates.size()) {
+    const std::string message = std::string("Radius") + " index out of bounds";
+    osrmc_set_error(error, "InvalidCoordinateIndex", message.c_str());
     return;
   }
 
-  osrmc_ensure_container_size(params_typed->radiuses, params_typed->coordinates.size());
+  if (params_typed->radiuses.size() < params_typed->coordinates.size()) {
+    params_typed->radiuses.resize(params_typed->coordinates.size());
+  }
   if (radius >= 0.0) {
     params_typed->radiuses[coordinate_index] = radius;
   } else {
@@ -712,15 +655,20 @@ osrmc_params_set_bearing(osrmc_params_t params,
                          int value,
                          int range,
                          osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  if (!osrmc_validate_coordinate_index(*params_typed, coordinate_index, "Bearing", error)) {
+  if (coordinate_index >= params_typed->coordinates.size()) {
+    const std::string message = std::string("Bearing") + " index out of bounds";
+    osrmc_set_error(error, "InvalidCoordinateIndex", message.c_str());
     return;
   }
 
-  osrmc_ensure_container_size(params_typed->bearings, params_typed->coordinates.size());
+  if (params_typed->bearings.size() < params_typed->coordinates.size()) {
+    params_typed->bearings.resize(params_typed->coordinates.size());
+  }
   if (value < 0 || range < 0) {
     params_typed->bearings[coordinate_index] = std::nullopt;
     return;
@@ -736,15 +684,20 @@ osrmc_params_set_approach(osrmc_params_t params,
                           size_t coordinate_index,
                           approach_t approach,
                           osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  if (!osrmc_validate_coordinate_index(*params_typed, coordinate_index, "Approach", error)) {
+  if (coordinate_index >= params_typed->coordinates.size()) {
+    const std::string message = std::string("Approach") + " index out of bounds";
+    osrmc_set_error(error, "InvalidCoordinateIndex", message.c_str());
     return;
   }
 
-  osrmc_ensure_container_size(params_typed->approaches, params_typed->coordinates.size());
+  if (params_typed->approaches.size() < params_typed->coordinates.size()) {
+    params_typed->approaches.resize(params_typed->coordinates.size());
+  }
   std::optional<osrm::engine::Approach> approach_value;
   switch (approach) {
     case APPROACH_CURB:
@@ -768,7 +721,8 @@ osrmc_params_set_approach(osrmc_params_t params,
 
 void
 osrmc_params_add_exclude(osrmc_params_t params, const char* exclude_profile, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   if (!exclude_profile) {
@@ -784,7 +738,8 @@ osrmc_params_add_exclude(osrmc_params_t params, const char* exclude_profile, osr
 
 void
 osrmc_params_set_generate_hints(osrmc_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -795,7 +750,8 @@ osrmc_params_set_generate_hints(osrmc_params_t params, int on, osrmc_error_t* er
 
 void
 osrmc_params_set_skip_waypoints(osrmc_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -806,7 +762,8 @@ osrmc_params_set_skip_waypoints(osrmc_params_t params, int on, osrmc_error_t* er
 
 void
 osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -827,7 +784,8 @@ osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_erro
 
 void
 osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(params, error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
@@ -844,30 +802,6 @@ osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_err
   }
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-}
-
-
-const char*
-osrmc_blob_data(osrmc_blob_t blob) {
-  if (!blob) {
-    return nullptr;
-  }
-  return reinterpret_cast<osrmc_blob*>(blob)->data.c_str();
-}
-
-size_t
-osrmc_blob_size(osrmc_blob_t blob) {
-  if (!blob) {
-    return 0;
-  }
-  return reinterpret_cast<osrmc_blob*>(blob)->data.size();
-}
-
-void
-osrmc_blob_destruct(osrmc_blob_t blob) {
-  if (blob) {
-    delete reinterpret_cast<osrmc_blob*>(blob);
-  }
 }
 
 /* Nearest */
@@ -890,7 +824,8 @@ osrmc_nearest_params_destruct(osrmc_nearest_params_t params) {
 
 void
 osrmc_nearest_params_set_number_of_results(osrmc_nearest_params_t params, unsigned n, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::NearestParameters*>(params);
@@ -911,17 +846,62 @@ osrmc_nearest(osrmc_osrm_t osrm, osrmc_nearest_params_t params, osrmc_error_t* e
 
 void
 osrmc_nearest_response_destruct(osrmc_nearest_response_t response) {
-  osrmc_response_destruct(response);
+  if (response) {
+    delete reinterpret_cast<osrmc_response*>(response);
+  }
 }
 
 osrmc_blob_t
-osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error) {
-  return osrmc_response_json_helper(response, error);
+osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
+  auto* blob = new osrmc_blob;
+  osrmc_json::osrmc_json_renderer renderer{blob->data};
+  renderer(json_obj);
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
 }
 
 osrmc_blob_t
-osrmc_nearest_response_flatbuffer(osrmc_nearest_response_t response, osrmc_error_t* error) {
-  return osrmc_response_flatbuffer_helper(response, error);
+osrmc_nearest_response_flatbuffer(osrmc_nearest_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+  auto* blob = new osrmc_blob;
+  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+output_format_t
+osrmc_nearest_response_format(osrmc_nearest_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return FORMAT_JSON;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
+    return FORMAT_JSON;
+  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    return FORMAT_FLATBUFFERS;
+  } else {
+    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
+    return FORMAT_JSON;
+  }
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return FORMAT_JSON;
 }
 
 /* Route */
@@ -945,7 +925,8 @@ osrmc_route_params_destruct(osrmc_route_params_t params) {
 
 void
 osrmc_route_params_set_steps(osrmc_route_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
@@ -956,7 +937,8 @@ osrmc_route_params_set_steps(osrmc_route_params_t params, int on, osrmc_error_t*
 
 void
 osrmc_route_params_set_alternatives(osrmc_route_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
@@ -967,6 +949,10 @@ osrmc_route_params_set_alternatives(osrmc_route_params_t params, int on, osrmc_e
 
 void
 osrmc_route_params_set_geometries(osrmc_route_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   switch (geometries) {
     case GEOMETRIES_POLYLINE:
@@ -988,6 +974,10 @@ osrmc_route_params_set_geometries(osrmc_route_params_t params, geometries_type_t
 
 void
 osrmc_route_params_set_overview(osrmc_route_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   switch (overview) {
     case OVERVIEW_SIMPLIFIED:
@@ -1009,6 +999,10 @@ osrmc_route_params_set_overview(osrmc_route_params_t params, overview_type_t ove
 
 void
 osrmc_route_params_set_continue_straight(osrmc_route_params_t params, int on, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   if (on < 0) {
     params_typed->continue_straight = std::nullopt;
@@ -1021,6 +1015,10 @@ osrmc_route_params_set_continue_straight(osrmc_route_params_t params, int on, os
 
 void
 osrmc_route_params_set_number_of_alternatives(osrmc_route_params_t params, unsigned count, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   params_typed->number_of_alternatives = count;
   params_typed->alternatives = count > 0;
@@ -1032,6 +1030,10 @@ void
 osrmc_route_params_set_annotations(osrmc_route_params_t params,
                                    route_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
   params_typed->annotations = (annotations != ROUTE_ANNOTATIONS_NONE);
@@ -1041,6 +1043,10 @@ osrmc_route_params_set_annotations(osrmc_route_params_t params,
 
 void
 osrmc_route_params_add_waypoint(osrmc_route_params_t params, size_t index, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
   params_typed->waypoints.emplace_back(index);
 } catch (const std::exception& e) {
@@ -1067,17 +1073,62 @@ osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error
 
 void
 osrmc_route_response_destruct(osrmc_route_response_t response) {
-  osrmc_response_destruct(response);
+  if (response) {
+    delete reinterpret_cast<osrmc_response*>(response);
+  }
 }
 
 osrmc_blob_t
-osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error) {
-  return osrmc_response_json_helper(response, error);
+osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
+  auto* blob = new osrmc_blob;
+  osrmc_json::osrmc_json_renderer renderer{blob->data};
+  renderer(json_obj);
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
 }
 
 osrmc_blob_t
-osrmc_route_response_flatbuffer(osrmc_route_response_t response, osrmc_error_t* error) {
-  return osrmc_response_flatbuffer_helper(response, error);
+osrmc_route_response_flatbuffer(osrmc_route_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+  auto* blob = new osrmc_blob;
+  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+output_format_t
+osrmc_route_response_format(osrmc_route_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return FORMAT_JSON;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
+    return FORMAT_JSON;
+  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    return FORMAT_FLATBUFFERS;
+  } else {
+    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
+    return FORMAT_JSON;
+  }
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return FORMAT_JSON;
 }
 
 /* Table */
@@ -1100,7 +1151,8 @@ osrmc_table_params_destruct(osrmc_table_params_t params) {
 
 void
 osrmc_table_params_add_source(osrmc_table_params_t params, size_t index, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
@@ -1111,7 +1163,8 @@ osrmc_table_params_add_source(osrmc_table_params_t params, size_t index, osrmc_e
 
 void
 osrmc_table_params_add_destination(osrmc_table_params_t params, size_t index, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
@@ -1124,7 +1177,8 @@ void
 osrmc_table_params_set_annotations(osrmc_table_params_t params,
                                    table_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
@@ -1151,7 +1205,8 @@ osrmc_table_params_set_annotations(osrmc_table_params_t params,
 
 void
 osrmc_table_params_set_fallback_speed(osrmc_table_params_t params, double speed, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   if (speed <= 0) {
@@ -1168,7 +1223,8 @@ void
 osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
                                                 table_coordinate_type_t coord_type,
                                                 osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TableParameters*>(params);
@@ -1189,7 +1245,8 @@ osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
 
 void
 osrmc_table_params_set_scale_factor(osrmc_table_params_t params, double scale_factor, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   if (scale_factor <= 0) {
@@ -1214,17 +1271,62 @@ osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t params, osrmc_error_t* error
 
 void
 osrmc_table_response_destruct(osrmc_table_response_t response) {
-  osrmc_response_destruct(response);
+  if (response) {
+    delete reinterpret_cast<osrmc_response*>(response);
+  }
 }
 
 osrmc_blob_t
-osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error) {
-  return osrmc_response_json_helper(response, error);
+osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
+  auto* blob = new osrmc_blob;
+  osrmc_json::osrmc_json_renderer renderer{blob->data};
+  renderer(json_obj);
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
 }
 
 osrmc_blob_t
-osrmc_table_response_flatbuffer(osrmc_table_response_t response, osrmc_error_t* error) {
-  return osrmc_response_flatbuffer_helper(response, error);
+osrmc_table_response_flatbuffer(osrmc_table_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+  auto* blob = new osrmc_blob;
+  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+output_format_t
+osrmc_table_response_format(osrmc_table_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return FORMAT_JSON;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
+    return FORMAT_JSON;
+  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    return FORMAT_FLATBUFFERS;
+  } else {
+    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
+    return FORMAT_JSON;
+  }
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return FORMAT_JSON;
 }
 
 /* Match */
@@ -1247,7 +1349,8 @@ osrmc_match_params_destruct(osrmc_match_params_t params) {
 
 void
 osrmc_match_params_set_steps(osrmc_match_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
@@ -1258,7 +1361,8 @@ osrmc_match_params_set_steps(osrmc_match_params_t params, int on, osrmc_error_t*
 
 void
 osrmc_match_params_set_alternatives(osrmc_match_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
@@ -1269,6 +1373,10 @@ osrmc_match_params_set_alternatives(osrmc_match_params_t params, int on, osrmc_e
 
 void
 osrmc_match_params_set_geometries(osrmc_match_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   switch (geometries) {
     case GEOMETRIES_POLYLINE:
@@ -1290,6 +1398,10 @@ osrmc_match_params_set_geometries(osrmc_match_params_t params, geometries_type_t
 
 void
 osrmc_match_params_set_overview(osrmc_match_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   switch (overview) {
     case OVERVIEW_SIMPLIFIED:
@@ -1311,6 +1423,10 @@ osrmc_match_params_set_overview(osrmc_match_params_t params, overview_type_t ove
 
 void
 osrmc_match_params_set_continue_straight(osrmc_match_params_t params, int on, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   if (on < 0) {
     params_typed->continue_straight = std::nullopt;
@@ -1323,6 +1439,10 @@ osrmc_match_params_set_continue_straight(osrmc_match_params_t params, int on, os
 
 void
 osrmc_match_params_set_number_of_alternatives(osrmc_match_params_t params, unsigned count, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   params_typed->number_of_alternatives = count;
   params_typed->alternatives = count > 0;
@@ -1334,6 +1454,10 @@ void
 osrmc_match_params_set_annotations(osrmc_match_params_t params,
                                    route_annotations_type_t annotations,
                                    osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
   params_typed->annotations = (annotations != ROUTE_ANNOTATIONS_NONE);
@@ -1343,6 +1467,10 @@ osrmc_match_params_set_annotations(osrmc_match_params_t params,
 
 void
 osrmc_match_params_add_waypoint(osrmc_match_params_t params, size_t index, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
   params_typed->waypoints.emplace_back(index);
 } catch (const std::exception& e) {
@@ -1359,7 +1487,8 @@ osrmc_match_params_clear_waypoints(osrmc_match_params_t params) {
 
 void
 osrmc_match_params_add_timestamp(osrmc_match_params_t params, unsigned timestamp, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
@@ -1370,7 +1499,8 @@ osrmc_match_params_add_timestamp(osrmc_match_params_t params, unsigned timestamp
 
 void
 osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
@@ -1381,7 +1511,8 @@ osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps,
 
 void
 osrmc_match_params_set_tidy(osrmc_match_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
@@ -1402,17 +1533,62 @@ osrmc_match(osrmc_osrm_t osrm, osrmc_match_params_t params, osrmc_error_t* error
 
 void
 osrmc_match_response_destruct(osrmc_match_response_t response) {
-  osrmc_response_destruct(response);
+  if (response) {
+    delete reinterpret_cast<osrmc_response*>(response);
+  }
 }
 
 osrmc_blob_t
-osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error) {
-  return osrmc_response_json_helper(response, error);
+osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
+  auto* blob = new osrmc_blob;
+  osrmc_json::osrmc_json_renderer renderer{blob->data};
+  renderer(json_obj);
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
 }
 
 osrmc_blob_t
-osrmc_match_response_flatbuffer(osrmc_match_response_t response, osrmc_error_t* error) {
-  return osrmc_response_flatbuffer_helper(response, error);
+osrmc_match_response_flatbuffer(osrmc_match_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+  auto* blob = new osrmc_blob;
+  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+output_format_t
+osrmc_match_response_format(osrmc_match_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return FORMAT_JSON;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
+    return FORMAT_JSON;
+  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    return FORMAT_FLATBUFFERS;
+  } else {
+    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
+    return FORMAT_JSON;
+  }
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return FORMAT_JSON;
 }
 
 /* Trip */
@@ -1435,7 +1611,8 @@ osrmc_trip_params_destruct(osrmc_trip_params_t params) {
 
 void
 osrmc_trip_params_set_roundtrip(osrmc_trip_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1446,7 +1623,8 @@ osrmc_trip_params_set_roundtrip(osrmc_trip_params_t params, int on, osrmc_error_
 
 void
 osrmc_trip_params_set_source(osrmc_trip_params_t params, trip_source_type_t source, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1459,7 +1637,8 @@ void
 osrmc_trip_params_set_destination(osrmc_trip_params_t params,
                                   trip_destination_type_t destination,
                                   osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1470,7 +1649,8 @@ osrmc_trip_params_set_destination(osrmc_trip_params_t params,
 
 void
 osrmc_trip_params_set_steps(osrmc_trip_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1481,7 +1661,8 @@ osrmc_trip_params_set_steps(osrmc_trip_params_t params, int on, osrmc_error_t* e
 
 void
 osrmc_trip_params_set_alternatives(osrmc_trip_params_t params, int on, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1492,6 +1673,10 @@ osrmc_trip_params_set_alternatives(osrmc_trip_params_t params, int on, osrmc_err
 
 void
 osrmc_trip_params_set_geometries(osrmc_trip_params_t params, geometries_type_t geometries, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
   switch (geometries) {
     case GEOMETRIES_POLYLINE:
@@ -1513,6 +1698,10 @@ osrmc_trip_params_set_geometries(osrmc_trip_params_t params, geometries_type_t g
 
 void
 osrmc_trip_params_set_overview(osrmc_trip_params_t params, overview_type_t overview, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
   switch (overview) {
     case OVERVIEW_SIMPLIFIED:
@@ -1534,6 +1723,10 @@ osrmc_trip_params_set_overview(osrmc_trip_params_t params, overview_type_t overv
 
 void
 osrmc_trip_params_set_continue_straight(osrmc_trip_params_t params, int on, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
   if (on < 0) {
     params_typed->continue_straight = std::nullopt;
@@ -1546,6 +1739,10 @@ osrmc_trip_params_set_continue_straight(osrmc_trip_params_t params, int on, osrm
 
 void
 osrmc_trip_params_set_number_of_alternatives(osrmc_trip_params_t params, unsigned count, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
   params_typed->number_of_alternatives = count;
   params_typed->alternatives = count > 0;
@@ -1557,6 +1754,10 @@ void
 osrmc_trip_params_set_annotations(osrmc_trip_params_t params,
                                   route_annotations_type_t annotations,
                                   osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
   params_typed->annotations_type = static_cast<osrm::RouteParameters::AnnotationsType>(annotations);
   params_typed->annotations = (annotations != ROUTE_ANNOTATIONS_NONE);
@@ -1574,7 +1775,8 @@ osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params) {
 
 void
 osrmc_trip_params_add_waypoint(osrmc_trip_params_t params, size_t index, osrmc_error_t* error) try {
-  if (!osrmc_validate_params(reinterpret_cast<osrmc_params_t>(params), error)) {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
@@ -1595,17 +1797,62 @@ osrmc_trip(osrmc_osrm_t osrm, osrmc_trip_params_t params, osrmc_error_t* error) 
 
 void
 osrmc_trip_response_destruct(osrmc_trip_response_t response) {
-  osrmc_response_destruct(response);
+  if (response) {
+    delete reinterpret_cast<osrmc_response*>(response);
+  }
 }
 
 osrmc_blob_t
-osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error) {
-  return osrmc_response_json_helper(response, error);
+osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
+  auto* blob = new osrmc_blob;
+  osrmc_json::osrmc_json_renderer renderer{blob->data};
+  renderer(json_obj);
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
 }
 
 osrmc_blob_t
-osrmc_trip_response_flatbuffer(osrmc_trip_response_t response, osrmc_error_t* error) {
-  return osrmc_response_flatbuffer_helper(response, error);
+osrmc_trip_response_flatbuffer(osrmc_trip_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return nullptr;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+  auto* blob = new osrmc_blob;
+  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  return reinterpret_cast<osrmc_blob_t>(blob);
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return nullptr;
+}
+
+output_format_t
+osrmc_trip_response_format(osrmc_trip_response_t response, osrmc_error_t* error) try {
+  if (!response) {
+    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
+    return FORMAT_JSON;
+  }
+  auto* resp = reinterpret_cast<osrmc_response*>(response);
+  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
+    return FORMAT_JSON;
+  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    return FORMAT_FLATBUFFERS;
+  } else {
+    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
+    return FORMAT_JSON;
+  }
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
+  return FORMAT_JSON;
 }
 
 /* Tile */
@@ -1629,43 +1876,50 @@ osrmc_tile_params_destruct(osrmc_tile_params_t params) {
   }
 }
 
-template<typename FieldType>
-static void
-osrmc_tile_params_set_field(osrmc_tile_params_t params,
-                            FieldType osrm::TileParameters::* field,
-                            FieldType value,
-                            osrmc_error_t* error) try {
+void
+osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* error) try {
   if (!params) {
     osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return;
   }
   auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
-  params_typed->*field = value;
+  params_typed->x = x;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* error) {
-  osrmc_tile_params_set_field(params, &osrm::TileParameters::x, x, error);
+osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
+  auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
+  params_typed->y = y;
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
 }
 
 void
-osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* error) {
-  osrmc_tile_params_set_field(params, &osrm::TileParameters::y, y, error);
-}
-
-void
-osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error) {
-  osrmc_tile_params_set_field(params, &osrm::TileParameters::z, z, error);
+osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
+  }
+  auto* params_typed = reinterpret_cast<osrm::TileParameters*>(params);
+  params_typed->z = z;
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
 }
 
 osrmc_tile_response_t
 osrmc_tile(osrmc_osrm_t osrm, osrmc_tile_params_t params, osrmc_error_t* error) try {
-  if (!osrmc_validate_osrm(osrm, error) || !params) {
-    if (!params) {
-      osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
-    }
+  if (!osrm) {
+    osrmc_set_error(error, "InvalidArgument", "OSRM instance must not be null");
+    return nullptr;
+  }
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
     return nullptr;
   }
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
@@ -1682,7 +1936,14 @@ osrmc_tile(osrmc_osrm_t osrm, osrmc_tile_params_t params, osrmc_error_t* error) 
 
   if (std::holds_alternative<osrm::json::Object>(result)) {
     auto& json = std::get<osrm::json::Object>(result);
-    osrmc_error_from_json(json, error);
+    if (error) {
+      auto code = std::get<osrm::json::String>(json.values["code"]).value;
+      auto message = std::get<osrm::json::String>(json.values["message"]).value;
+      if (code.empty()) {
+        code = "Unknown";
+      }
+      osrmc_set_error(error, code.c_str(), message.c_str());
+    }
   } else {
     osrmc_set_error(error, "TileError", "Failed to generate tile");
   }

@@ -1,8 +1,11 @@
 # libosrmc
 
 A fork of Daniel Hofmann's C wrapper around the C++ `libosrm` library.
-To facilitate the development of a Julia wrapper for the OSRM library, the fork was patched and expanded.
+To facilitate the development of a Julia wrapper for the OSRM library, the fork underwent a major refactoring.
 See [OpenSourceRoutingMachine.jl](https://github.com/moviro-hub/OpenSourceRoutingMachine.jl) if you are interested in the Julia package.
+
+The API should be feature complete for all services and parameters supported by `libosrm`.
+The returned data is dependent on the format set via `osrmc_params_set_format` in JSON or FlatBuffers format.
 
 ##### Dependencies
 

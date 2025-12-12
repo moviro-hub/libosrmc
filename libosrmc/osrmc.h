@@ -141,24 +141,23 @@ typedef enum { GEOMETRIES_POLYLINE = 0, GEOMETRIES_POLYLINE6 = 1, GEOMETRIES_GEO
 typedef enum { OVERVIEW_SIMPLIFIED = 0, OVERVIEW_FULL = 1, OVERVIEW_FALSE = 2 } overview_type_t;
 
 /* Annotations */
-typedef enum : uint8_t {
-  ROUTE_ANNOTATIONS_NONE = 0x00,
-  ROUTE_ANNOTATIONS_DURATION = 0x01,
-  ROUTE_ANNOTATIONS_NODES = 0x02,
-  ROUTE_ANNOTATIONS_DISTANCE = 0x04,
-  ROUTE_ANNOTATIONS_WEIGHT = 0x08,
-  ROUTE_ANNOTATIONS_DATASOURCES = 0x10,
-  ROUTE_ANNOTATIONS_SPEED = 0x20,
-  ROUTE_ANNOTATIONS_ALL = ROUTE_ANNOTATIONS_DURATION | ROUTE_ANNOTATIONS_NODES | ROUTE_ANNOTATIONS_DISTANCE |
-                          ROUTE_ANNOTATIONS_WEIGHT | ROUTE_ANNOTATIONS_DATASOURCES | ROUTE_ANNOTATIONS_SPEED
+typedef enum {
+  ROUTE_ANNOTATIONS_NONE = 0,
+  ROUTE_ANNOTATIONS_DURATION = 1,
+  ROUTE_ANNOTATIONS_NODES = 2,
+  ROUTE_ANNOTATIONS_DISTANCE = 4,
+  ROUTE_ANNOTATIONS_WEIGHT = 8,
+  ROUTE_ANNOTATIONS_DATASOURCES = 16,
+  ROUTE_ANNOTATIONS_SPEED = 32,
+  ROUTE_ANNOTATIONS_ALL = 63
 } route_annotations_type_t;
 
 /* Table annotations */
-typedef enum : uint8_t {
-  TABLE_ANNOTATIONS_NONE = 0x00,
-  TABLE_ANNOTATIONS_DURATION = 0x01,
-  TABLE_ANNOTATIONS_DISTANCE = 0x02,
-  TABLE_ANNOTATIONS_ALL = TABLE_ANNOTATIONS_DURATION | TABLE_ANNOTATIONS_DISTANCE
+typedef enum {
+  TABLE_ANNOTATIONS_NONE = 1,
+  TABLE_ANNOTATIONS_DURATION = 2,
+  TABLE_ANNOTATIONS_DISTANCE = 4,
+  TABLE_ANNOTATIONS_ALL = 3
 } table_annotations_type_t;
 
 /* Table fallback coordinate*/
@@ -183,6 +182,16 @@ osrmc_error_message(osrmc_error_t error);
 /* Error destructor */
 OSRMC_API void
 osrmc_error_destruct(osrmc_error_t error);
+
+/* JSON */
+
+/* JSON blob accessors*/
+OSRMC_API void
+osrmc_blob_destruct(osrmc_blob_t blob);
+OSRMC_API size_t
+osrmc_blob_size(osrmc_blob_t blob);
+OSRMC_API const char*
+osrmc_blob_data(osrmc_blob_t blob);
 
 /* Config */
 
@@ -232,7 +241,7 @@ OSRMC_API osrmc_osrm_t
 osrmc_osrm_construct(osrmc_config_t config, osrmc_error_t* error);
 OSRMC_API void
 osrmc_osrm_destruct(osrmc_osrm_t osrm);
-/* OSRM parameter setters*/
+/* OSRM base parameter setters*/
 OSRMC_API void
 osrmc_params_add_coordinate(osrmc_params_t params, double longitude, double latitude, osrmc_error_t* error);
 OSRMC_API void
@@ -261,13 +270,6 @@ OSRMC_API void
 osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_error_t* error);
 OSRMC_API void
 osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_error_t* error);
-/* OSRM response blob accessors*/
-OSRMC_API const char*
-osrmc_blob_data(osrmc_blob_t blob);
-OSRMC_API size_t
-osrmc_blob_size(osrmc_blob_t blob);
-OSRMC_API void
-osrmc_blob_destruct(osrmc_blob_t blob);
 
 /* Nearest */
 
@@ -279,12 +281,15 @@ osrmc_nearest_params_destruct(osrmc_nearest_params_t params);
 /* Nearest parameter setters*/
 OSRMC_API void
 osrmc_nearest_params_set_number_of_results(osrmc_nearest_params_t params, unsigned n, osrmc_error_t* error);
+
 /* Nearest response constructor and destructor */
 OSRMC_API osrmc_nearest_response_t
 osrmc_nearest(osrmc_osrm_t osrm, osrmc_nearest_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_nearest_response_destruct(osrmc_nearest_response_t response);
 /* Nearest response getters*/
+OSRMC_API output_format_t
+osrmc_nearest_response_format(osrmc_nearest_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
 osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -318,12 +323,15 @@ OSRMC_API void
 osrmc_route_params_add_waypoint(osrmc_route_params_t params, size_t index, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_clear_waypoints(osrmc_route_params_t params);
+
 /* Route response constructor and destructor*/
 OSRMC_API osrmc_route_response_t
 osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_response_destruct(osrmc_route_response_t response);
 /* Route response getters*/
+OSRMC_API output_format_t
+osrmc_route_response_format(osrmc_route_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
 osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -353,12 +361,15 @@ osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
                                                 osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_set_scale_factor(osrmc_table_params_t params, double scale_factor, osrmc_error_t* error);
+
 /* Table response constructor and destructor */
 OSRMC_API osrmc_table_response_t
 osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_response_destruct(osrmc_table_response_t response);
 /* Table response getters*/
+OSRMC_API output_format_t
+osrmc_table_response_format(osrmc_table_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
 osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -398,12 +409,15 @@ OSRMC_API void
 osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_set_tidy(osrmc_match_params_t params, int on, osrmc_error_t* error);
+
 /* Match response constructor and destructor */
 OSRMC_API osrmc_match_response_t
 osrmc_match(osrmc_osrm_t osrm, osrmc_match_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_response_destruct(osrmc_match_response_t response);
 /* Match response getters*/
+OSRMC_API output_format_t
+osrmc_match_response_format(osrmc_match_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
 osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -445,12 +459,15 @@ OSRMC_API void
 osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params);
 OSRMC_API void
 osrmc_trip_params_add_waypoint(osrmc_trip_params_t params, size_t index, osrmc_error_t* error);
+
 /* Trip response constructor and destructor */
 OSRMC_API osrmc_trip_response_t
 osrmc_trip(osrmc_osrm_t osrm, osrmc_trip_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_response_destruct(osrmc_trip_response_t response);
 /* Trip response getters*/
+OSRMC_API output_format_t
+osrmc_trip_response_format(osrmc_trip_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
 osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -470,16 +487,17 @@ OSRMC_API void
 osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* error);
 OSRMC_API void
 osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error);
+
 /* Tile response constructor and destructor */
 OSRMC_API osrmc_tile_response_t
 osrmc_tile(osrmc_osrm_t osrm, osrmc_tile_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_tile_response_destruct(osrmc_tile_response_t response);
 /* Tile response getters*/
-OSRMC_API const char*
-osrmc_tile_response_data(osrmc_tile_response_t response, size_t* size, osrmc_error_t* error);
 OSRMC_API size_t
 osrmc_tile_response_size(osrmc_tile_response_t response, osrmc_error_t* error);
+OSRMC_API const char*
+osrmc_tile_response_data(osrmc_tile_response_t response, size_t* size, osrmc_error_t* error);
 
 #ifdef __cplusplus
 }
