@@ -198,7 +198,14 @@ osrmc_service_helper(osrmc_osrm_t osrm,
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<ParamsType*>(params);
 
-  osrm::engine::api::ResultT result = osrm::json::Object();
+  // Initialize result based on format parameter (like the server services do)
+  osrm::engine::api::ResultT result;
+  if (params_typed->format &&
+      params_typed->format.value() == osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS) {
+    result = flatbuffers::FlatBufferBuilder();
+  } else {
+    result = osrm::json::Object();
+  }
   const auto status = method(*osrm_typed, *params_typed, result);
 
   if (status == osrm::Status::Ok) {
@@ -206,16 +213,23 @@ osrmc_service_helper(osrmc_osrm_t osrm,
     return reinterpret_cast<ResponseHandle>(out);
   }
 
-  // Extract error from JSON response, fallback to generic error
+  // Extract error from response, fallback to generic error
+  // Errors are always returned as JSON, even when format is flatbuffers
   try {
     if (error) {
-      auto& json = std::get<osrm::json::Object>(result);
-      auto code = std::get<osrm::json::String>(json.values["code"]).value;
-      auto message = std::get<osrm::json::String>(json.values["message"]).value;
-      if (code.empty()) {
-        code = "Unknown";
+      // Check if result is JSON (errors are always JSON)
+      if (std::holds_alternative<osrm::json::Object>(result)) {
+        auto& json = std::get<osrm::json::Object>(result);
+        auto code = std::get<osrm::json::String>(json.values["code"]).value;
+        auto message = std::get<osrm::json::String>(json.values["message"]).value;
+        if (code.empty()) {
+          code = "Unknown";
+        }
+        osrmc_set_error(error, code.c_str(), message.c_str());
+      } else {
+        // If result is flatbuffers but we have an error, something went wrong
+        osrmc_set_error(error, error_name, "Request failed");
       }
-      osrmc_set_error(error, code.c_str(), message.c_str());
     }
   } catch (...) {
     osrmc_set_error(error, error_name, "Request failed");
