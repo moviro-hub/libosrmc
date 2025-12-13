@@ -557,6 +557,8 @@ osrmc_osrm_destruct(osrmc_osrm_t osrm) {
   }
 }
 
+/* Base */
+
 void
 osrmc_params_add_coordinate(osrmc_params_t params, double longitude, double latitude, osrmc_error_t* error) try {
   if (!params) {

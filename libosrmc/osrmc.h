@@ -12,36 +12,25 @@
  * Services: Nearest, Route, Table, Match, Trip, Tile
  *
  * Basic Workflow:
- * 1. Create config: osrmc_config_construct(path, &error)
- * 2. Construct OSRM: osrmc_osrm_construct(config, &error)
- * 3. Create params: osrmc_service_params_construct(&error)
- * 4. Add coordinates: osrmc_params_add_coordinate(params, lon, lat, &error)
- * 5. Set format (optional, default JSON): osrmc_params_set_format(params, FORMAT_JSON/FORMAT_FLATBUFFERS, &error)
- * 6. Query service: osrmc_service(osrm, params, &error)
- * 7. Get response: osrmc_service_response_json() or osrmc_service_response_flatbuffer()
- * 8. Cleanup: osrmc_blob_destruct(blob), osrmc_service_response_destruct(response)
+ *   1. osrmc_config_construct() -> osrmc_osrm_construct()
+ *   2. osrmc_*_params_construct() -> add coordinates -> set options
+ *   3. osrmc_*() -> get response via *_response_json() or *_response_flatbuffer()
+ *   4. Cleanup: osrmc_blob_destruct(), *_response_destruct(), osrmc_osrm_destruct()
  *
  * Example:
- *
  *   osrmc_error_t error = NULL;
  *   osrmc_config_t config = osrmc_config_construct(path, &error);
  *   osrmc_osrm_t osrm = osrmc_osrm_construct(config, &error);
  *   osrmc_route_params_t params = osrmc_route_params_construct(&error);
  *   osrmc_params_add_coordinate((osrmc_params_t)params, lon, lat, &error);
- *   osrmc_params_set_format((osrmc_params_t)params, FORMAT_JSON, &error);  // or FORMAT_FLATBUFFERS
  *   osrmc_route_response_t response = osrmc_route(osrm, params, &error);
  *   if (!error && response) {
- *     // For JSON format:
- *     osrmc_blob_t json_blob = osrmc_route_response_json(response, &error);
- *     if (json_blob) {
- *       const char* json_data = osrmc_blob_data(json_blob);
- *       size_t json_size = osrmc_blob_size(json_blob);
- *       // Use json_data (valid until osrmc_blob_destruct)
- *       osrmc_blob_destruct(json_blob);
+ *     osrmc_blob_t blob = osrmc_route_response_json(response, &error);
+ *     if (blob) {
+ *       const char* data = osrmc_blob_data(blob);
+ *       size_t size = osrmc_blob_size(blob);
+ *       osrmc_blob_destruct(blob);
  *     }
- *     // For FlatBuffers format:
- *     // osrmc_blob_t fb_blob = osrmc_route_response_flatbuffer(response, &error);
- *     // if (fb_blob) { ... osrmc_blob_destruct(fb_blob); }
  *     osrmc_route_response_destruct(response);
  *   }
  *   if (error) {
@@ -50,14 +39,11 @@
  *   }
  *
  * Error Handling:
- * Functions take osrmc_error_t* out parameter. Check error after each call.
- * Get message via osrmc_error_message(), destruct via osrmc_error_destruct().
+ *   All functions use osrmc_error_t* out parameter. Check after each call.
  *
- * Response Data:
- * Services support JSON and FlatBuffers formats. Set format via osrmc_params_set_format().
- * Get JSON via *_response_json() or FlatBuffers via *_response_flatbuffer().
- * Both return osrmc_blob_t. Access data via osrmc_blob_data() and size via osrmc_blob_size().
- * Tile service uses osrmc_tile_response_data() and osrmc_tile_response_size() for binary data.
+ * Response Formats:
+ *   JSON (default) or FlatBuffers via osrmc_params_set_format().
+ *   Tile service returns binary data via osrmc_tile_response_data().
  *
  */
 
@@ -84,63 +70,50 @@ osrmc_is_abi_compatible(void);
 
 /* Types */
 
-/* Error */
+// Error
 typedef struct osrmc_error* osrmc_error_t;
-/* Config*/
-typedef struct osrmc_config* osrmc_config_t;
-
-/* OSRM */
-typedef struct osrmc_osrm* osrmc_osrm_t;
-typedef struct osrmc_params* osrmc_params_t;
+// JSON
 typedef struct osrmc_blob* osrmc_blob_t;
-
-/* Nearest */
+// Config
+typedef struct osrmc_config* osrmc_config_t;
+// OSRM
+typedef struct osrmc_osrm* osrmc_osrm_t;
+// Base
+typedef struct osrmc_params* osrmc_params_t;
+// Nearest
 typedef struct osrmc_nearest_params* osrmc_nearest_params_t;
 typedef struct osrmc_nearest_response* osrmc_nearest_response_t;
-
-/* Route */
+// Route
 typedef struct osrmc_route_params* osrmc_route_params_t;
 typedef struct osrmc_route_response* osrmc_route_response_t;
-
-/* Table */
+// Table
 typedef struct osrmc_table_params* osrmc_table_params_t;
 typedef struct osrmc_table_response* osrmc_table_response_t;
-
-/* Match */
+// Match
 typedef struct osrmc_match_params* osrmc_match_params_t;
 typedef struct osrmc_match_response* osrmc_match_response_t;
-
-/* Trip */
+// Trip
 typedef struct osrmc_trip_params* osrmc_trip_params_t;
 typedef struct osrmc_trip_response* osrmc_trip_response_t;
-
-/* Tile */
+// Tile
 typedef struct osrmc_tile_params* osrmc_tile_params_t;
 typedef struct osrmc_tile_response* osrmc_tile_response_t;
 
 /* Enums */
 
-/* Output formats */
-/* FORMAT_JSON: Returns JSON response via *_response_json() */
-/* FORMAT_FLATBUFFERS: Returns FlatBuffers binary data via *_response_flatbuffer() */
+// Output formats
 typedef enum { FORMAT_JSON = 0, FORMAT_FLATBUFFERS = 1 } output_format_t;
-
-/* Algorithms */
+// Algorithms
 typedef enum { ALGORITHM_CH = 0, ALGORITHM_MLD = 1 } algorithm_t;
-
-/* Snapping */
+// Snapping
 typedef enum { SNAPPING_DEFAULT = 0, SNAPPING_ANY = 1 } snapping_t;
-
-/* Approach */
+// Approach
 typedef enum { APPROACH_CURB = 0, APPROACH_UNRESTRICTED = 1, APPROACH_OPPOSITE = 2 } approach_t;
-
-/* Geometries */
+// Geometries
 typedef enum { GEOMETRIES_POLYLINE = 0, GEOMETRIES_POLYLINE6 = 1, GEOMETRIES_GEOJSON = 2 } geometries_type_t;
-
-/* Overviews */
+// Overviews
 typedef enum { OVERVIEW_SIMPLIFIED = 0, OVERVIEW_FULL = 1, OVERVIEW_FALSE = 2 } overview_type_t;
-
-/* Annotations */
+// Annotations
 typedef enum {
   ANNOTATIONS_NONE = 0,
   ANNOTATIONS_DURATION = 1,
@@ -151,41 +124,36 @@ typedef enum {
   ANNOTATIONS_SPEED = 32,
   ANNOTATIONS_ALL = 63
 } annotations_type_t;
-
-/* Table annotations */
+// Table annotations
 typedef enum {
   TABLE_ANNOTATIONS_NONE = 1,
   TABLE_ANNOTATIONS_DURATION = 2,
   TABLE_ANNOTATIONS_DISTANCE = 4,
   TABLE_ANNOTATIONS_ALL = 3
 } table_annotations_type_t;
-
-/* Table fallback coordinate*/
+// Table coordinate
 typedef enum { TABLE_COORDINATE_INPUT = 0, TABLE_COORDINATE_SNAPPED = 1 } table_coordinate_type_t;
-
-/* Match gaps */
+// Match gaps
 typedef enum { MATCH_GAPS_SPLIT = 0, MATCH_GAPS_IGNORE = 1 } match_gaps_type_t;
-
-/* Trip source */
+// Trip source
 typedef enum { TRIP_SOURCE_ANY = 0, TRIP_SOURCE_FIRST = 1 } trip_source_type_t;
-
-/* Trip destination */
+// Trip destination
 typedef enum { TRIP_DESTINATION_ANY = 0, TRIP_DESTINATION_LAST = 1 } trip_destination_type_t;
 
 /* Error*/
 
-/* Error code and message getters */
+// Error code and message getters
 OSRMC_API const char*
 osrmc_error_code(osrmc_error_t error);
 OSRMC_API const char*
 osrmc_error_message(osrmc_error_t error);
-/* Error destructor */
+// Error destructor
 OSRMC_API void
 osrmc_error_destruct(osrmc_error_t error);
 
 /* JSON */
 
-/* JSON blob accessors*/
+// JSON blob accessors
 OSRMC_API void
 osrmc_blob_destruct(osrmc_blob_t blob);
 OSRMC_API size_t
@@ -195,12 +163,12 @@ osrmc_blob_data(osrmc_blob_t blob);
 
 /* Config */
 
-/* Config constructor and destructor */
+// Config constructor and destructor
 OSRMC_API osrmc_config_t
 osrmc_config_construct(const char* base_path, osrmc_error_t* error);
 OSRMC_API void
 osrmc_config_destruct(osrmc_config_t config);
-/* Config parameter setters */
+// Config parameter setters
 OSRMC_API void
 osrmc_config_set_max_locations_trip(osrmc_config_t config, int max_locations, osrmc_error_t* error);
 OSRMC_API void
@@ -236,12 +204,15 @@ osrmc_config_clear_disabled_feature_datasets(osrmc_config_t config, osrmc_error_
 
 /* OSRM */
 
-/* OSRM constructor and destructor */
+// OSRM constructor and destructor
 OSRMC_API osrmc_osrm_t
 osrmc_osrm_construct(osrmc_config_t config, osrmc_error_t* error);
 OSRMC_API void
 osrmc_osrm_destruct(osrmc_osrm_t osrm);
-/* OSRM base parameter setters*/
+
+/* Base */
+
+// Base parameter setters (shared between all services)
 OSRMC_API void
 osrmc_params_add_coordinate(osrmc_params_t params, double longitude, double latitude, osrmc_error_t* error);
 OSRMC_API void
@@ -273,21 +244,21 @@ osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_err
 
 /* Nearest */
 
-/* Nearest parameter constructor and destructor */
+// Nearest parameter constructor and destructor
 OSRMC_API osrmc_nearest_params_t
 osrmc_nearest_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_nearest_params_destruct(osrmc_nearest_params_t params);
-/* Nearest parameter setters*/
+// Nearest parameter setters
 OSRMC_API void
 osrmc_nearest_params_set_number_of_results(osrmc_nearest_params_t params, unsigned n, osrmc_error_t* error);
 
-/* Nearest response constructor and destructor */
+// Nearest response constructor and destructor
 OSRMC_API osrmc_nearest_response_t
 osrmc_nearest(osrmc_osrm_t osrm, osrmc_nearest_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_nearest_response_destruct(osrmc_nearest_response_t response);
-/* Nearest response getters*/
+// Nearest response getters
 OSRMC_API output_format_t
 osrmc_nearest_response_format(osrmc_nearest_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -297,12 +268,12 @@ osrmc_nearest_response_flatbuffer(osrmc_nearest_response_t response, osrmc_error
 
 /* Route */
 
-/* Route parameter  constructor and destructor*/
+// Route parameter  constructor and destructor
 OSRMC_API osrmc_route_params_t
 osrmc_route_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_params_destruct(osrmc_route_params_t params);
-/* Route parameter setters*/
+// Route parameter setters
 OSRMC_API void
 osrmc_route_params_set_steps(osrmc_route_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
@@ -324,12 +295,12 @@ osrmc_route_params_add_waypoint(osrmc_route_params_t params, size_t index, osrmc
 OSRMC_API void
 osrmc_route_params_clear_waypoints(osrmc_route_params_t params);
 
-/* Route response constructor and destructor*/
+// Route response constructor and destructor
 OSRMC_API osrmc_route_response_t
 osrmc_route(osrmc_osrm_t osrm, osrmc_route_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_route_response_destruct(osrmc_route_response_t response);
-/* Route response getters*/
+// Route response getters
 OSRMC_API output_format_t
 osrmc_route_response_format(osrmc_route_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -339,12 +310,12 @@ osrmc_route_response_flatbuffer(osrmc_route_response_t response, osrmc_error_t* 
 
 /* Table */
 
-/* Table parameter constructor and destructor */
+// Table parameter constructor and destructor
 OSRMC_API osrmc_table_params_t
 osrmc_table_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_params_destruct(osrmc_table_params_t params);
-/* Table parameter setters*/
+// Table parameter setters
 OSRMC_API void
 osrmc_table_params_add_source(osrmc_table_params_t params, size_t index, osrmc_error_t* error);
 OSRMC_API void
@@ -362,12 +333,12 @@ osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
 OSRMC_API void
 osrmc_table_params_set_scale_factor(osrmc_table_params_t params, double scale_factor, osrmc_error_t* error);
 
-/* Table response constructor and destructor */
+// Table response constructor and destructor
 OSRMC_API osrmc_table_response_t
 osrmc_table(osrmc_osrm_t osrm, osrmc_table_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_table_response_destruct(osrmc_table_response_t response);
-/* Table response getters*/
+// Table response getters
 OSRMC_API output_format_t
 osrmc_table_response_format(osrmc_table_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -377,12 +348,12 @@ osrmc_table_response_flatbuffer(osrmc_table_response_t response, osrmc_error_t* 
 
 /* Match */
 
-/* Match parameter constructor and destructor */
+// Match parameter constructor and destructor
 OSRMC_API osrmc_match_params_t
 osrmc_match_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_destruct(osrmc_match_params_t params);
-/* Match parameter setters*/
+// Match parameter setters
 OSRMC_API void
 osrmc_match_params_set_steps(osrmc_match_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
@@ -410,12 +381,12 @@ osrmc_match_params_set_gaps(osrmc_match_params_t params, match_gaps_type_t gaps,
 OSRMC_API void
 osrmc_match_params_set_tidy(osrmc_match_params_t params, int on, osrmc_error_t* error);
 
-/* Match response constructor and destructor */
+// Match response constructor and destructor
 OSRMC_API osrmc_match_response_t
 osrmc_match(osrmc_osrm_t osrm, osrmc_match_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_response_destruct(osrmc_match_response_t response);
-/* Match response getters*/
+// Match response getters
 OSRMC_API output_format_t
 osrmc_match_response_format(osrmc_match_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -425,12 +396,12 @@ osrmc_match_response_flatbuffer(osrmc_match_response_t response, osrmc_error_t* 
 
 /* Trip */
 
-/* Trip parameter constructor and destructor */
+// Trip parameter constructor and destructor
 OSRMC_API osrmc_trip_params_t
 osrmc_trip_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_destruct(osrmc_trip_params_t params);
-/* Trip parameter setters*/
+// Trip parameter setters
 OSRMC_API void
 osrmc_trip_params_set_roundtrip(osrmc_trip_params_t params, int on, osrmc_error_t* error);
 OSRMC_API void
@@ -460,12 +431,12 @@ osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params);
 OSRMC_API void
 osrmc_trip_params_add_waypoint(osrmc_trip_params_t params, size_t index, osrmc_error_t* error);
 
-/* Trip response constructor and destructor */
+// Trip response constructor and destructor
 OSRMC_API osrmc_trip_response_t
 osrmc_trip(osrmc_osrm_t osrm, osrmc_trip_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_response_destruct(osrmc_trip_response_t response);
-/* Trip response getters*/
+// Trip response getters
 OSRMC_API output_format_t
 osrmc_trip_response_format(osrmc_trip_response_t response, osrmc_error_t* error);
 OSRMC_API osrmc_blob_t
@@ -475,12 +446,12 @@ osrmc_trip_response_flatbuffer(osrmc_trip_response_t response, osrmc_error_t* er
 
 /* Tile */
 
-/* Tile parameter constructor and destructor */
+// Tile parameter constructor and destructor
 OSRMC_API osrmc_tile_params_t
 osrmc_tile_params_construct(osrmc_error_t* error);
 OSRMC_API void
 osrmc_tile_params_destruct(osrmc_tile_params_t params);
-/* Tile parameter setters*/
+// Tile parameter setters
 OSRMC_API void
 osrmc_tile_params_set_x(osrmc_tile_params_t params, unsigned x, osrmc_error_t* error);
 OSRMC_API void
@@ -488,12 +459,12 @@ osrmc_tile_params_set_y(osrmc_tile_params_t params, unsigned y, osrmc_error_t* e
 OSRMC_API void
 osrmc_tile_params_set_z(osrmc_tile_params_t params, unsigned z, osrmc_error_t* error);
 
-/* Tile response constructor and destructor */
+// Tile response constructor and destructor
 OSRMC_API osrmc_tile_response_t
 osrmc_tile(osrmc_osrm_t osrm, osrmc_tile_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_tile_response_destruct(osrmc_tile_response_t response);
-/* Tile response getters*/
+// Tile response getters
 OSRMC_API size_t
 osrmc_tile_response_size(osrmc_tile_response_t response, osrmc_error_t* error);
 OSRMC_API const char*
