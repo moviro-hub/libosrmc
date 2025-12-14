@@ -1,6 +1,6 @@
 # libosrmc
 
-A C interface for the OSRM routing engine. Provides a simple, full-featured API to access OSRM's routing services with support for JSON and FlatBuffers output formats.
+A C interface for the OSRM routing engine. Provides a simple, full-featured API to access OSRM's route planning in road networks. The API has restriction FlatBuffers output format only.
 
 Originally forked from Daniel Hofmann's `libosrmc`, this version has been substantially refactored to facilitate the development of [OpenSourceRoutingMachine.jl](https://github.com/moviro-hub/OpenSourceRoutingMachine.jl).
 
@@ -46,27 +46,29 @@ osrmc_route_params_t params = osrmc_route_params_construct(&error);
 osrmc_params_add_coordinate((osrmc_params_t)params, 13.388860, 52.517037, &error);
 osrmc_params_add_coordinate((osrmc_params_t)params, 13.397634, 52.529407, &error);
 
-// 4. Set output format (optional, default is JSON)
-osrmc_params_set_format((osrmc_params_t)params, FORMAT_JSON, &error);
-
-// 5. Query service
+// 4. Query service
 osrmc_route_response_t response = osrmc_route(osrm, params, &error);
 
-// 6. Get response data
+// 5. Get response data (FlatBuffer format)
 if (!error && response) {
-    osrmc_blob_t json_blob = osrmc_route_response_json(response, &error);
-    if (json_blob) {
-        const char* data = osrmc_blob_data(json_blob);
-        size_t size = osrmc_blob_size(json_blob);
-        // Use data...
-        osrmc_blob_destruct(json_blob);
+    uint8_t* data = NULL;
+    size_t size = 0;
+    void (*deleter)(void*) = NULL;
+    osrmc_route_response_transfer_flatbuffer(response, &data, &size, &deleter, &error);
+    if (data) {
+        // Use data (valid until deleter is called)
+        // size contains the length
+        // ... process FlatBuffer data ...
+        deleter(data);  // Free the data when done
     }
     osrmc_route_response_destruct(response);
 }
 
-// 7. Cleanup
+// 6. Cleanup
 if (error) {
-    fprintf(stderr, "Error: %s\n", osrmc_error_message(error));
+    fprintf(stderr, "Error [%s]: %s\n",
+            osrmc_error_code(error),
+            osrmc_error_message(error));
     osrmc_error_destruct(error);
 }
 osrmc_route_params_destruct(params);
@@ -85,7 +87,7 @@ libosrmc provides access to six OSRM services:
 - **Trip**: Solve traveling salesman problem
 - **Tile**: Retrieve vector tiles
 
-All services support JSON and FlatBuffers output formats (set via `osrmc_params_set_format()`). The Tile service returns binary data.
+All services use FlatBuffers output format (automatically set when params are constructed). The Tile service returns binary data via `osrmc_tile_response_data()`.
 
 ## Error Handling
 
@@ -102,6 +104,10 @@ if (error) {
     return;
 }
 ```
+
+## Response Format
+
+Responses are returned as FlatBuffers binary data. Use the `*_response_transfer_flatbuffer()` function to get the data with zero-copy semantics. The caller is responsible for calling the provided deleter function to free the memory when done.
 
 ## License
 

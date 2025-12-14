@@ -1,16 +1,13 @@
 // Standard library headers
 #include <algorithm>
 #include <cctype>
-#include <cmath>
-#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <filesystem>
-#include <limits>
-#include <locale>
+#include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -55,96 +52,9 @@ struct osrmc_error final {
   std::string message;
 };
 
-struct osrmc_blob final {
-  std::string data;
-};
-
 struct osrmc_response final {
   osrm::engine::api::ResultT result;
 };
-
-/* JSON renderer */
-
-// Minimal JSON renderer using only public osrm::json API
-namespace osrmc_json {
-  void osrmc_json_escape_string(std::string& out, std::string_view value) {
-    constexpr const char hex[] = "0123456789abcdef";
-
-    for (const unsigned char ch : value) {
-      // Handle control characters (< 0x20) with Unicode escape
-      if (ch < 0x20) {
-        out += "\\u00";
-        out.push_back(hex[(ch >> 4) & 0x0F]);
-        out.push_back(hex[ch & 0x0F]);
-        continue;
-      }
-
-      // Handle special characters that need escaping
-      switch (ch) {
-        case '"':  out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:   out.push_back(static_cast<char>(ch)); break;
-      }
-    }
-  }
-
-  // Visitor for JSON variant types
-  struct osrmc_json_renderer {
-    std::string& out;
-
-    void operator()(const osrm::json::String& s) {
-      out += '"';
-      osrmc_json_escape_string(out, s.value);
-      out += '"';
-    }
-
-    void operator()(const osrm::json::Number& n) {
-      if (!std::isfinite(n.value)) {
-        out += "null";
-        return;
-      }
-      char buf[32];
-      std::snprintf(buf, sizeof(buf), "%.10g", n.value);
-      out += buf;
-    }
-
-    void operator()(const osrm::json::Object& obj) {
-      out += '{';
-      bool first = true;
-      for (const auto& [key, value] : obj.values) {
-        if (!first)
-          out += ',';
-        first = false;
-        out += '"';
-        osrmc_json_escape_string(out, key);
-        out += "\":";
-        std::visit(*this, value); // Recursively render value
-      }
-      out += '}';
-    }
-
-    void operator()(const osrm::json::Array& arr) {
-      out += '[';
-      bool first = true;
-      for (const auto& value : arr.values) {
-        if (!first)
-          out += ',';
-        first = false;
-        std::visit(*this, value);
-      }
-      out += ']';
-    }
-
-    void operator()(const osrm::json::True&) { out += "true"; }
-    void operator()(const osrm::json::False&) { out += "false"; }
-    void operator()(const osrm::json::Null&) { out += "null"; }
-  };
-} // namespace osrmc_json
 
 
 /* Helpers */
@@ -179,6 +89,64 @@ osrmc_error_destruct(osrmc_error_t error) {
   }
 }
 
+// Transfer helper for FlatBuffer responses
+static void
+osrmc_transfer_flatbuffer_helper(osrmc_response* resp,
+                                  uint8_t** data,
+                                  size_t* size,
+                                  void (**deleter)(void*),
+                                  osrmc_error_t* error) {
+  if (!std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
+    osrmc_set_error(error, "InvalidFormat", "Response is not in FlatBuffer format");
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
+
+  // Release buffer from builder (move semantics)
+  // ReleaseRaw returns raw buffer and offset
+  size_t buffer_offset = 0;
+  size_t buffer_size = 0;
+  uint8_t* raw_buffer_ptr = builder.ReleaseRaw(buffer_size, buffer_offset);
+  uint8_t* data_ptr = raw_buffer_ptr + buffer_offset;
+
+  if (buffer_offset == 0) {
+    // Zero-copy case: data starts at the beginning of the buffer
+    // Set deleter to free the raw buffer
+    *deleter = [](void* ptr) { std::free(ptr); };
+
+    // Transfer ownership directly
+    *data = data_ptr;  // Same as raw_buffer_ptr when offset is 0
+    *size = buffer_size;
+  } else {
+    // Offset case: we need to copy just the data portion
+    // This is still more efficient than copying the entire buffer
+    uint8_t* copied_data = static_cast<uint8_t*>(std::malloc(buffer_size));
+    if (!copied_data) {
+      std::free(raw_buffer_ptr);
+      osrmc_set_error(error, "MemoryError", "Failed to allocate memory for FlatBuffer data");
+      if (data) *data = nullptr;
+      if (size) *size = 0;
+      if (deleter) *deleter = nullptr;
+      return;
+    }
+    std::memcpy(copied_data, data_ptr, buffer_size);
+    std::free(raw_buffer_ptr);
+
+    // Set deleter to free the copied data
+    *deleter = [](void* ptr) { std::free(ptr); };
+
+    // Transfer ownership of copied data
+    *data = copied_data;
+    *size = buffer_size;
+  }
+
+  // Clear result
+  resp->result = osrm::json::Object();
+}
+
 // Service helpers
 template<typename ParamsHandle, typename ParamsType, typename ResponseHandle, typename MethodFunc>
 static ResponseHandle
@@ -192,20 +160,14 @@ osrmc_service_helper(osrmc_osrm_t osrm,
     return nullptr;
   }
   if (!params) {
-    osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return nullptr;
   }
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
   auto* params_typed = reinterpret_cast<ParamsType*>(params);
 
-  // Initialize result based on format parameter (like the server services do)
-  osrm::engine::api::ResultT result;
-  if (params_typed->format &&
-      params_typed->format.value() == osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS) {
-    result = flatbuffers::FlatBufferBuilder();
-  } else {
-    result = osrm::json::Object();
-  }
+  // Always use FlatBuffer format
+  osrm::engine::api::ResultT result = flatbuffers::FlatBufferBuilder();
   const auto status = method(*osrm_typed, *params_typed, result);
 
   if (status == osrm::Status::Ok) {
@@ -214,10 +176,10 @@ osrmc_service_helper(osrmc_osrm_t osrm,
   }
 
   // Extract error from response, fallback to generic error
-  // Errors are always returned as JSON, even when format is flatbuffers
   try {
     if (error) {
-      // Check if result is JSON (errors are always JSON)
+      // Errors are returned as JSON even when format is flatbuffers
+      // Try to extract error from result if it's JSON (for error responses)
       if (std::holds_alternative<osrm::json::Object>(result)) {
         auto& json = std::get<osrm::json::Object>(result);
         auto code = std::get<osrm::json::String>(json.values["code"]).value;
@@ -227,7 +189,6 @@ osrmc_service_helper(osrmc_osrm_t osrm,
         }
         osrmc_set_error(error, code.c_str(), message.c_str());
       } else {
-        // If result is flatbuffers but we have an error, something went wrong
         osrmc_set_error(error, error_name, "Request failed");
       }
     }
@@ -238,30 +199,6 @@ osrmc_service_helper(osrmc_osrm_t osrm,
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
   return nullptr;
-}
-
-// JSON helpers
-const char*
-osrmc_blob_data(osrmc_blob_t blob) {
-  if (!blob) {
-    return nullptr;
-  }
-  return reinterpret_cast<osrmc_blob*>(blob)->data.c_str();
-}
-
-size_t
-osrmc_blob_size(osrmc_blob_t blob) {
-  if (!blob) {
-    return 0;
-  }
-  return reinterpret_cast<osrmc_blob*>(blob)->data.size();
-}
-
-void
-osrmc_blob_destruct(osrmc_blob_t blob) {
-  if (blob) {
-    delete reinterpret_cast<osrmc_blob*>(blob);
-  }
 }
 
 /* Config */
@@ -780,33 +717,14 @@ osrmc_params_set_snapping(osrmc_params_t params, snapping_t snapping, osrmc_erro
   osrmc_error_from_exception(e, error);
 }
 
-void
-osrmc_params_set_format(osrmc_params_t params, output_format_t format, osrmc_error_t* error) try {
-  if (!params) {
-    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
-    return;
-  }
-  auto* params_typed = reinterpret_cast<osrm::engine::api::BaseParameters*>(params);
-  switch (format) {
-    case FORMAT_JSON:
-      params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::JSON;
-      break;
-    case FORMAT_FLATBUFFERS:
-      params_typed->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
-      break;
-    default:
-      osrmc_set_error(error, "InvalidFormat", "Unknown output format");
-      return;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-}
 
 /* Nearest */
 
 osrmc_nearest_params_t
 osrmc_nearest_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::NearestParameters;
+  // Always set FlatBuffer format
+  out->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
   return reinterpret_cast<osrmc_nearest_params_t>(out);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -849,57 +767,31 @@ osrmc_nearest_response_destruct(osrmc_nearest_response_t response) {
   }
 }
 
-osrmc_blob_t
-osrmc_nearest_response_json(osrmc_nearest_response_t response, osrmc_error_t* error) try {
+void
+osrmc_nearest_response_transfer_flatbuffer(
+    osrmc_nearest_response_t response,
+    uint8_t** data,
+    size_t* size,
+    void (**deleter)(void*),
+    osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  if (!data || !size || !deleter) {
+    osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
+    return;
   }
   auto* resp = reinterpret_cast<osrmc_response*>(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(json_obj);
-  return reinterpret_cast<osrmc_blob_t>(blob);
+  osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-osrmc_blob_t
-osrmc_nearest_response_flatbuffer(osrmc_nearest_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-output_format_t
-osrmc_nearest_response_format(osrmc_nearest_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return FORMAT_JSON;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
-    return FORMAT_JSON;
-  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
-    return FORMAT_FLATBUFFERS;
-  } else {
-    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
-    return FORMAT_JSON;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return FORMAT_JSON;
+  if (data) *data = nullptr;
+  if (size) *size = 0;
+  if (deleter) *deleter = nullptr;
 }
 
 /* Route */
@@ -907,7 +799,8 @@ osrmc_nearest_response_format(osrmc_nearest_response_t response, osrmc_error_t* 
 osrmc_route_params_t
 osrmc_route_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::RouteParameters;
-
+  // Always set FlatBuffer format
+  out->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
   return reinterpret_cast<osrmc_route_params_t>(out);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -1076,57 +969,31 @@ osrmc_route_response_destruct(osrmc_route_response_t response) {
   }
 }
 
-osrmc_blob_t
-osrmc_route_response_json(osrmc_route_response_t response, osrmc_error_t* error) try {
+void
+osrmc_route_response_transfer_flatbuffer(
+    osrmc_route_response_t response,
+    uint8_t** data,
+    size_t* size,
+    void (**deleter)(void*),
+    osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  if (!data || !size || !deleter) {
+    osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
+    return;
   }
   auto* resp = reinterpret_cast<osrmc_response*>(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(json_obj);
-  return reinterpret_cast<osrmc_blob_t>(blob);
+  osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-osrmc_blob_t
-osrmc_route_response_flatbuffer(osrmc_route_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-output_format_t
-osrmc_route_response_format(osrmc_route_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return FORMAT_JSON;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
-    return FORMAT_JSON;
-  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
-    return FORMAT_FLATBUFFERS;
-  } else {
-    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
-    return FORMAT_JSON;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return FORMAT_JSON;
+  if (data) *data = nullptr;
+  if (size) *size = 0;
+  if (deleter) *deleter = nullptr;
 }
 
 /* Table */
@@ -1134,6 +1001,8 @@ osrmc_route_response_format(osrmc_route_response_t response, osrmc_error_t* erro
 osrmc_table_params_t
 osrmc_table_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::TableParameters;
+  // Always set FlatBuffer format
+  out->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
   return reinterpret_cast<osrmc_table_params_t>(out);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -1274,57 +1143,31 @@ osrmc_table_response_destruct(osrmc_table_response_t response) {
   }
 }
 
-osrmc_blob_t
-osrmc_table_response_json(osrmc_table_response_t response, osrmc_error_t* error) try {
+void
+osrmc_table_response_transfer_flatbuffer(
+    osrmc_table_response_t response,
+    uint8_t** data,
+    size_t* size,
+    void (**deleter)(void*),
+    osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  if (!data || !size || !deleter) {
+    osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
+    return;
   }
   auto* resp = reinterpret_cast<osrmc_response*>(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(json_obj);
-  return reinterpret_cast<osrmc_blob_t>(blob);
+  osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-osrmc_blob_t
-osrmc_table_response_flatbuffer(osrmc_table_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-output_format_t
-osrmc_table_response_format(osrmc_table_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return FORMAT_JSON;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
-    return FORMAT_JSON;
-  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
-    return FORMAT_FLATBUFFERS;
-  } else {
-    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
-    return FORMAT_JSON;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return FORMAT_JSON;
+  if (data) *data = nullptr;
+  if (size) *size = 0;
+  if (deleter) *deleter = nullptr;
 }
 
 /* Match */
@@ -1332,6 +1175,8 @@ osrmc_table_response_format(osrmc_table_response_t response, osrmc_error_t* erro
 osrmc_match_params_t
 osrmc_match_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::MatchParameters;
+  // Always set FlatBuffer format
+  out->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
   return reinterpret_cast<osrmc_match_params_t>(out);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -1536,57 +1381,31 @@ osrmc_match_response_destruct(osrmc_match_response_t response) {
   }
 }
 
-osrmc_blob_t
-osrmc_match_response_json(osrmc_match_response_t response, osrmc_error_t* error) try {
+void
+osrmc_match_response_transfer_flatbuffer(
+    osrmc_match_response_t response,
+    uint8_t** data,
+    size_t* size,
+    void (**deleter)(void*),
+    osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  if (!data || !size || !deleter) {
+    osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
+    return;
   }
   auto* resp = reinterpret_cast<osrmc_response*>(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(json_obj);
-  return reinterpret_cast<osrmc_blob_t>(blob);
+  osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-osrmc_blob_t
-osrmc_match_response_flatbuffer(osrmc_match_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-output_format_t
-osrmc_match_response_format(osrmc_match_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return FORMAT_JSON;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
-    return FORMAT_JSON;
-  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
-    return FORMAT_FLATBUFFERS;
-  } else {
-    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
-    return FORMAT_JSON;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return FORMAT_JSON;
+  if (data) *data = nullptr;
+  if (size) *size = 0;
+  if (deleter) *deleter = nullptr;
 }
 
 /* Trip */
@@ -1594,6 +1413,8 @@ osrmc_match_response_format(osrmc_match_response_t response, osrmc_error_t* erro
 osrmc_trip_params_t
 osrmc_trip_params_construct(osrmc_error_t* error) try {
   auto* out = new osrm::TripParameters;
+  // Always set FlatBuffer format
+  out->format = osrm::engine::api::BaseParameters::OutputFormatType::FLATBUFFERS;
   return reinterpret_cast<osrmc_trip_params_t>(out);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
@@ -1800,57 +1621,31 @@ osrmc_trip_response_destruct(osrmc_trip_response_t response) {
   }
 }
 
-osrmc_blob_t
-osrmc_trip_response_json(osrmc_trip_response_t response, osrmc_error_t* error) try {
+void
+osrmc_trip_response_transfer_flatbuffer(
+    osrmc_trip_response_t response,
+    uint8_t** data,
+    size_t* size,
+    void (**deleter)(void*),
+    osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
+    if (data) *data = nullptr;
+    if (size) *size = 0;
+    if (deleter) *deleter = nullptr;
+    return;
+  }
+  if (!data || !size || !deleter) {
+    osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
+    return;
   }
   auto* resp = reinterpret_cast<osrmc_response*>(response);
-  const auto& json_obj = std::get<osrm::json::Object>(resp->result);
-  auto* blob = new osrmc_blob;
-  osrmc_json::osrmc_json_renderer renderer{blob->data};
-  renderer(json_obj);
-  return reinterpret_cast<osrmc_blob_t>(blob);
+  osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-osrmc_blob_t
-osrmc_trip_response_flatbuffer(osrmc_trip_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return nullptr;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
-  auto* blob = new osrmc_blob;
-  blob->data.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
-  return reinterpret_cast<osrmc_blob_t>(blob);
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return nullptr;
-}
-
-output_format_t
-osrmc_trip_response_format(osrmc_trip_response_t response, osrmc_error_t* error) try {
-  if (!response) {
-    osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    return FORMAT_JSON;
-  }
-  auto* resp = reinterpret_cast<osrmc_response*>(response);
-  if (std::holds_alternative<osrm::json::Object>(resp->result)) {
-    return FORMAT_JSON;
-  } else if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
-    return FORMAT_FLATBUFFERS;
-  } else {
-    osrmc_set_error(error, "InvalidResponse", "Response contains unknown format");
-    return FORMAT_JSON;
-  }
-} catch (const std::exception& e) {
-  osrmc_error_from_exception(e, error);
-  return FORMAT_JSON;
+  if (data) *data = nullptr;
+  if (size) *size = 0;
+  if (deleter) *deleter = nullptr;
 }
 
 /* Tile */
@@ -1917,7 +1712,7 @@ osrmc_tile(osrmc_osrm_t osrm, osrmc_tile_params_t params, osrmc_error_t* error) 
     return nullptr;
   }
   if (!params) {
-    osrmc_set_error(error, "InvalidArgument", "OSRM instance and params must not be null");
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
     return nullptr;
   }
   auto* osrm_typed = reinterpret_cast<osrm::OSRM*>(osrm);
