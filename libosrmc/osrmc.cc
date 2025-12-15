@@ -98,15 +98,18 @@ osrmc_free_deleter(void* ptr) {
 // Transfer helper for FlatBuffer responses
 static void
 osrmc_transfer_flatbuffer_helper(osrmc_response* resp,
-                                  uint8_t** data,
-                                  size_t* size,
-                                  void (**deleter)(void*),
-                                  osrmc_error_t* error) {
+                                 uint8_t** data,
+                                 size_t* size,
+                                 void (**deleter)(void*),
+                                 osrmc_error_t* error) {
   if (!std::holds_alternative<flatbuffers::FlatBufferBuilder>(resp->result)) {
     osrmc_set_error(error, "InvalidFormat", "Response is not in FlatBuffer format");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   auto& builder = std::get<flatbuffers::FlatBufferBuilder>(resp->result);
@@ -124,7 +127,7 @@ osrmc_transfer_flatbuffer_helper(osrmc_response* resp,
     *deleter = osrmc_free_deleter;
 
     // Transfer ownership directly
-    *data = data_ptr;  // Same as raw_buffer_ptr when offset is 0
+    *data = data_ptr; // Same as raw_buffer_ptr when offset is 0
     *size = buffer_size;
   } else {
     // Offset case: we need to copy just the data portion
@@ -134,9 +137,12 @@ osrmc_transfer_flatbuffer_helper(osrmc_response* resp,
     if (!copied_data) {
       std::free(raw_buffer_ptr);
       osrmc_set_error(error, "MemoryError", "Failed to allocate memory for FlatBuffer data");
-      if (data) *data = nullptr;
-      if (size) *size = 0;
-      if (deleter) *deleter = nullptr;
+      if (data)
+        *data = nullptr;
+      if (size)
+        *size = 0;
+      if (deleter)
+        *deleter = nullptr;
       return;
     }
     std::memcpy(copied_data, data_ptr, data_size);
@@ -623,7 +629,9 @@ osrmc_config_disable_feature_dataset(osrmc_config_t config, const char* dataset_
   auto* config_typed = reinterpret_cast<osrm::EngineConfig*>(config);
   // Convert to lowercase and check dataset name
   std::string lower_name = dataset_name;
-  std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
   std::optional<osrm::storage::FeatureDataset> dataset;
   if (lower_name == "route_steps") {
     dataset = osrm::storage::FeatureDataset::ROUTE_STEPS;
@@ -668,7 +676,10 @@ osrmc_config_get_disabled_feature_dataset_count(osrmc_config_t config, size_t* o
 }
 
 void
-osrmc_config_get_disabled_feature_dataset_at(osrmc_config_t config, size_t index, const char** out_dataset_name, osrmc_error_t* error) try {
+osrmc_config_get_disabled_feature_dataset_at(osrmc_config_t config,
+                                             size_t index,
+                                             const char** out_dataset_name,
+                                             osrmc_error_t* error) try {
   if (!out_dataset_name) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -817,7 +828,11 @@ osrmc_params_get_coordinate_count(osrmc_params_t params, size_t* out_count, osrm
 }
 
 void
-osrmc_params_get_coordinate(osrmc_params_t params, size_t coordinate_index, double* out_longitude, double* out_latitude, osrmc_error_t* error) try {
+osrmc_params_get_coordinate(osrmc_params_t params,
+                            size_t coordinate_index,
+                            double* out_longitude,
+                            double* out_latitude,
+                            osrmc_error_t* error) try {
   if (!out_longitude || !out_latitude) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -831,8 +846,10 @@ osrmc_params_get_coordinate(osrmc_params_t params, size_t coordinate_index, doub
     osrmc_set_error(error, "InvalidCoordinateIndex", "Coordinate index out of bounds");
     return;
   }
-  *out_longitude = static_cast<double>(static_cast<std::int32_t>(params_typed->coordinates[coordinate_index].lon)) / osrm::COORDINATE_PRECISION;
-  *out_latitude = static_cast<double>(static_cast<std::int32_t>(params_typed->coordinates[coordinate_index].lat)) / osrm::COORDINATE_PRECISION;
+  *out_longitude = static_cast<double>(static_cast<std::int32_t>(params_typed->coordinates[coordinate_index].lon)) /
+                   osrm::COORDINATE_PRECISION;
+  *out_latitude = static_cast<double>(static_cast<std::int32_t>(params_typed->coordinates[coordinate_index].lat)) /
+                  osrm::COORDINATE_PRECISION;
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
 }
@@ -888,7 +905,10 @@ osrmc_params_set_hint(osrmc_params_t params,
 }
 
 void
-osrmc_params_get_hint(osrmc_params_t params, size_t coordinate_index, const char** out_hint_base64, osrmc_error_t* error) try {
+osrmc_params_get_hint(osrmc_params_t params,
+                      size_t coordinate_index,
+                      const char** out_hint_base64,
+                      osrmc_error_t* error) try {
   if (!out_hint_base64) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -940,7 +960,11 @@ osrmc_params_set_radius(osrmc_params_t params, size_t coordinate_index, double r
 }
 
 void
-osrmc_params_get_radius(osrmc_params_t params, size_t coordinate_index, double* out_radius, int* out_is_set, osrmc_error_t* error) try {
+osrmc_params_get_radius(osrmc_params_t params,
+                        size_t coordinate_index,
+                        double* out_radius,
+                        int* out_is_set,
+                        osrmc_error_t* error) try {
   if (!out_radius || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -995,7 +1019,12 @@ osrmc_params_set_bearing(osrmc_params_t params,
 }
 
 void
-osrmc_params_get_bearing(osrmc_params_t params, size_t coordinate_index, int* out_value, int* out_range, int* out_is_set, osrmc_error_t* error) try {
+osrmc_params_get_bearing(osrmc_params_t params,
+                         size_t coordinate_index,
+                         int* out_value,
+                         int* out_range,
+                         int* out_is_set,
+                         osrmc_error_t* error) try {
   if (!out_value || !out_range || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -1061,7 +1090,11 @@ osrmc_params_set_approach(osrmc_params_t params,
 }
 
 void
-osrmc_params_get_approach(osrmc_params_t params, size_t coordinate_index, approach_t* out_approach, int* out_is_set, osrmc_error_t* error) try {
+osrmc_params_get_approach(osrmc_params_t params,
+                          size_t coordinate_index,
+                          approach_t* out_approach,
+                          int* out_is_set,
+                          osrmc_error_t* error) try {
   if (!out_approach || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -1129,7 +1162,10 @@ osrmc_params_get_exclude_count(osrmc_params_t params, size_t* out_count, osrmc_e
 }
 
 void
-osrmc_params_get_exclude(osrmc_params_t params, size_t index, const char** out_exclude_profile, osrmc_error_t* error) try {
+osrmc_params_get_exclude(osrmc_params_t params,
+                         size_t index,
+                         const char** out_exclude_profile,
+                         osrmc_error_t* error) try {
   if (!out_exclude_profile) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1316,17 +1352,19 @@ osrmc_nearest_response_destruct(osrmc_nearest_response_t response) {
 }
 
 void
-osrmc_nearest_response_transfer_flatbuffer(
-    osrmc_nearest_response_t response,
-    uint8_t** data,
-    size_t* size,
-    void (**deleter)(void*),
-    osrmc_error_t* error) try {
+osrmc_nearest_response_transfer_flatbuffer(osrmc_nearest_response_t response,
+                                           uint8_t** data,
+                                           size_t* size,
+                                           void (**deleter)(void*),
+                                           osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   if (!data || !size || !deleter) {
@@ -1337,9 +1375,12 @@ osrmc_nearest_response_transfer_flatbuffer(
   osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  if (data) *data = nullptr;
-  if (size) *size = 0;
-  if (deleter) *deleter = nullptr;
+  if (data)
+    *data = nullptr;
+  if (size)
+    *size = 0;
+  if (deleter)
+    *deleter = nullptr;
 }
 
 /* Route */
@@ -1444,7 +1485,9 @@ osrmc_route_params_set_geometries(osrmc_route_params_t params, geometries_type_t
 }
 
 void
-osrmc_route_params_get_geometries(osrmc_route_params_t params, geometries_type_t* out_geometries, osrmc_error_t* error) try {
+osrmc_route_params_get_geometries(osrmc_route_params_t params,
+                                  geometries_type_t* out_geometries,
+                                  osrmc_error_t* error) try {
   if (!out_geometries) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1537,7 +1580,10 @@ osrmc_route_params_set_continue_straight(osrmc_route_params_t params, int on, os
 }
 
 void
-osrmc_route_params_get_continue_straight(osrmc_route_params_t params, int* out_on, int* out_is_set, osrmc_error_t* error) try {
+osrmc_route_params_get_continue_straight(osrmc_route_params_t params,
+                                         int* out_on,
+                                         int* out_is_set,
+                                         osrmc_error_t* error) try {
   if (!out_on || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -1571,7 +1617,9 @@ osrmc_route_params_set_number_of_alternatives(osrmc_route_params_t params, unsig
 }
 
 void
-osrmc_route_params_get_number_of_alternatives(osrmc_route_params_t params, unsigned* out_count, osrmc_error_t* error) try {
+osrmc_route_params_get_number_of_alternatives(osrmc_route_params_t params,
+                                              unsigned* out_count,
+                                              osrmc_error_t* error) try {
   if (!out_count) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1602,7 +1650,9 @@ osrmc_route_params_set_annotations(osrmc_route_params_t params,
 }
 
 void
-osrmc_route_params_get_annotations(osrmc_route_params_t params, annotations_type_t* out_annotations, osrmc_error_t* error) try {
+osrmc_route_params_get_annotations(osrmc_route_params_t params,
+                                   annotations_type_t* out_annotations,
+                                   osrmc_error_t* error) try {
   if (!out_annotations) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1646,7 +1696,10 @@ osrmc_route_params_get_waypoint_count(osrmc_route_params_t params, size_t* out_c
 }
 
 void
-osrmc_route_params_get_waypoint(osrmc_route_params_t params, size_t index, size_t* out_index, osrmc_error_t* error) try {
+osrmc_route_params_get_waypoint(osrmc_route_params_t params,
+                                size_t index,
+                                size_t* out_index,
+                                osrmc_error_t* error) try {
   if (!out_index) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1691,17 +1744,19 @@ osrmc_route_response_destruct(osrmc_route_response_t response) {
 }
 
 void
-osrmc_route_response_transfer_flatbuffer(
-    osrmc_route_response_t response,
-    uint8_t** data,
-    size_t* size,
-    void (**deleter)(void*),
-    osrmc_error_t* error) try {
+osrmc_route_response_transfer_flatbuffer(osrmc_route_response_t response,
+                                         uint8_t** data,
+                                         size_t* size,
+                                         void (**deleter)(void*),
+                                         osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   if (!data || !size || !deleter) {
@@ -1712,9 +1767,12 @@ osrmc_route_response_transfer_flatbuffer(
   osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  if (data) *data = nullptr;
-  if (size) *size = 0;
-  if (deleter) *deleter = nullptr;
+  if (data)
+    *data = nullptr;
+  if (size)
+    *size = 0;
+  if (deleter)
+    *deleter = nullptr;
 }
 
 /* Table */
@@ -1814,7 +1872,10 @@ osrmc_table_params_get_destination_count(osrmc_table_params_t params, size_t* ou
 }
 
 void
-osrmc_table_params_get_destination(osrmc_table_params_t params, size_t index, size_t* out_index, osrmc_error_t* error) try {
+osrmc_table_params_get_destination(osrmc_table_params_t params,
+                                   size_t index,
+                                   size_t* out_index,
+                                   osrmc_error_t* error) try {
   if (!out_index) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1864,7 +1925,9 @@ osrmc_table_params_set_annotations(osrmc_table_params_t params,
 }
 
 void
-osrmc_table_params_get_annotations(osrmc_table_params_t params, table_annotations_type_t* out_annotations, osrmc_error_t* error) try {
+osrmc_table_params_get_annotations(osrmc_table_params_t params,
+                                   table_annotations_type_t* out_annotations,
+                                   osrmc_error_t* error) try {
   if (!out_annotations) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -1949,7 +2012,9 @@ osrmc_table_params_set_fallback_coordinate_type(osrmc_table_params_t params,
 }
 
 void
-osrmc_table_params_get_fallback_coordinate_type(osrmc_table_params_t params, table_coordinate_type_t* out_coord_type, osrmc_error_t* error) try {
+osrmc_table_params_get_fallback_coordinate_type(osrmc_table_params_t params,
+                                                table_coordinate_type_t* out_coord_type,
+                                                osrmc_error_t* error) try {
   if (!out_coord_type) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2021,17 +2086,19 @@ osrmc_table_response_destruct(osrmc_table_response_t response) {
 }
 
 void
-osrmc_table_response_transfer_flatbuffer(
-    osrmc_table_response_t response,
-    uint8_t** data,
-    size_t* size,
-    void (**deleter)(void*),
-    osrmc_error_t* error) try {
+osrmc_table_response_transfer_flatbuffer(osrmc_table_response_t response,
+                                         uint8_t** data,
+                                         size_t* size,
+                                         void (**deleter)(void*),
+                                         osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   if (!data || !size || !deleter) {
@@ -2042,9 +2109,12 @@ osrmc_table_response_transfer_flatbuffer(
   osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  if (data) *data = nullptr;
-  if (size) *size = 0;
-  if (deleter) *deleter = nullptr;
+  if (data)
+    *data = nullptr;
+  if (size)
+    *size = 0;
+  if (deleter)
+    *deleter = nullptr;
 }
 
 /* Match */
@@ -2149,7 +2219,9 @@ osrmc_match_params_set_geometries(osrmc_match_params_t params, geometries_type_t
 }
 
 void
-osrmc_match_params_get_geometries(osrmc_match_params_t params, geometries_type_t* out_geometries, osrmc_error_t* error) try {
+osrmc_match_params_get_geometries(osrmc_match_params_t params,
+                                  geometries_type_t* out_geometries,
+                                  osrmc_error_t* error) try {
   if (!out_geometries) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2242,7 +2314,10 @@ osrmc_match_params_set_continue_straight(osrmc_match_params_t params, int on, os
 }
 
 void
-osrmc_match_params_get_continue_straight(osrmc_match_params_t params, int* out_on, int* out_is_set, osrmc_error_t* error) try {
+osrmc_match_params_get_continue_straight(osrmc_match_params_t params,
+                                         int* out_on,
+                                         int* out_is_set,
+                                         osrmc_error_t* error) try {
   if (!out_on || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -2276,7 +2351,9 @@ osrmc_match_params_set_number_of_alternatives(osrmc_match_params_t params, unsig
 }
 
 void
-osrmc_match_params_get_number_of_alternatives(osrmc_match_params_t params, unsigned* out_count, osrmc_error_t* error) try {
+osrmc_match_params_get_number_of_alternatives(osrmc_match_params_t params,
+                                              unsigned* out_count,
+                                              osrmc_error_t* error) try {
   if (!out_count) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2307,7 +2384,9 @@ osrmc_match_params_set_annotations(osrmc_match_params_t params,
 }
 
 void
-osrmc_match_params_get_annotations(osrmc_match_params_t params, annotations_type_t* out_annotations, osrmc_error_t* error) try {
+osrmc_match_params_get_annotations(osrmc_match_params_t params,
+                                   annotations_type_t* out_annotations,
+                                   osrmc_error_t* error) try {
   if (!out_annotations) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2351,7 +2430,10 @@ osrmc_match_params_get_waypoint_count(osrmc_match_params_t params, size_t* out_c
 }
 
 void
-osrmc_match_params_get_waypoint(osrmc_match_params_t params, size_t index, size_t* out_index, osrmc_error_t* error) try {
+osrmc_match_params_get_waypoint(osrmc_match_params_t params,
+                                size_t index,
+                                size_t* out_index,
+                                osrmc_error_t* error) try {
   if (!out_index) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2407,7 +2489,10 @@ osrmc_match_params_get_timestamp_count(osrmc_match_params_t params, size_t* out_
 }
 
 void
-osrmc_match_params_get_timestamp(osrmc_match_params_t params, size_t index, unsigned* out_timestamp, osrmc_error_t* error) try {
+osrmc_match_params_get_timestamp(osrmc_match_params_t params,
+                                 size_t index,
+                                 unsigned* out_timestamp,
+                                 osrmc_error_t* error) try {
   if (!out_timestamp) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2500,17 +2585,19 @@ osrmc_match_response_destruct(osrmc_match_response_t response) {
 }
 
 void
-osrmc_match_response_transfer_flatbuffer(
-    osrmc_match_response_t response,
-    uint8_t** data,
-    size_t* size,
-    void (**deleter)(void*),
-    osrmc_error_t* error) try {
+osrmc_match_response_transfer_flatbuffer(osrmc_match_response_t response,
+                                         uint8_t** data,
+                                         size_t* size,
+                                         void (**deleter)(void*),
+                                         osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   if (!data || !size || !deleter) {
@@ -2521,9 +2608,12 @@ osrmc_match_response_transfer_flatbuffer(
   osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  if (data) *data = nullptr;
-  if (size) *size = 0;
-  if (deleter) *deleter = nullptr;
+  if (data)
+    *data = nullptr;
+  if (size)
+    *size = 0;
+  if (deleter)
+    *deleter = nullptr;
 }
 
 /* Trip */
@@ -2617,7 +2707,9 @@ osrmc_trip_params_set_destination(osrmc_trip_params_t params,
 }
 
 void
-osrmc_trip_params_get_destination(osrmc_trip_params_t params, trip_destination_type_t* out_destination, osrmc_error_t* error) try {
+osrmc_trip_params_get_destination(osrmc_trip_params_t params,
+                                  trip_destination_type_t* out_destination,
+                                  osrmc_error_t* error) try {
   if (!out_destination) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2714,7 +2806,9 @@ osrmc_trip_params_set_geometries(osrmc_trip_params_t params, geometries_type_t g
 }
 
 void
-osrmc_trip_params_get_geometries(osrmc_trip_params_t params, geometries_type_t* out_geometries, osrmc_error_t* error) try {
+osrmc_trip_params_get_geometries(osrmc_trip_params_t params,
+                                 geometries_type_t* out_geometries,
+                                 osrmc_error_t* error) try {
   if (!out_geometries) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2807,7 +2901,10 @@ osrmc_trip_params_set_continue_straight(osrmc_trip_params_t params, int on, osrm
 }
 
 void
-osrmc_trip_params_get_continue_straight(osrmc_trip_params_t params, int* out_on, int* out_is_set, osrmc_error_t* error) try {
+osrmc_trip_params_get_continue_straight(osrmc_trip_params_t params,
+                                        int* out_on,
+                                        int* out_is_set,
+                                        osrmc_error_t* error) try {
   if (!out_on || !out_is_set) {
     osrmc_set_error(error, "InvalidArgument", "Output pointers must not be null");
     return;
@@ -2841,7 +2938,9 @@ osrmc_trip_params_set_number_of_alternatives(osrmc_trip_params_t params, unsigne
 }
 
 void
-osrmc_trip_params_get_number_of_alternatives(osrmc_trip_params_t params, unsigned* out_count, osrmc_error_t* error) try {
+osrmc_trip_params_get_number_of_alternatives(osrmc_trip_params_t params,
+                                             unsigned* out_count,
+                                             osrmc_error_t* error) try {
   if (!out_count) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2872,7 +2971,9 @@ osrmc_trip_params_set_annotations(osrmc_trip_params_t params,
 }
 
 void
-osrmc_trip_params_get_annotations(osrmc_trip_params_t params, annotations_type_t* out_annotations, osrmc_error_t* error) try {
+osrmc_trip_params_get_annotations(osrmc_trip_params_t params,
+                                  annotations_type_t* out_annotations,
+                                  osrmc_error_t* error) try {
   if (!out_annotations) {
     osrmc_set_error(error, "InvalidArgument", "Output pointer must not be null");
     return;
@@ -2961,17 +3062,19 @@ osrmc_trip_response_destruct(osrmc_trip_response_t response) {
 }
 
 void
-osrmc_trip_response_transfer_flatbuffer(
-    osrmc_trip_response_t response,
-    uint8_t** data,
-    size_t* size,
-    void (**deleter)(void*),
-    osrmc_error_t* error) try {
+osrmc_trip_response_transfer_flatbuffer(osrmc_trip_response_t response,
+                                        uint8_t** data,
+                                        size_t* size,
+                                        void (**deleter)(void*),
+                                        osrmc_error_t* error) try {
   if (!response) {
     osrmc_set_error(error, "InvalidArgument", "Response must not be null");
-    if (data) *data = nullptr;
-    if (size) *size = 0;
-    if (deleter) *deleter = nullptr;
+    if (data)
+      *data = nullptr;
+    if (size)
+      *size = 0;
+    if (deleter)
+      *deleter = nullptr;
     return;
   }
   if (!data || !size || !deleter) {
@@ -2982,9 +3085,12 @@ osrmc_trip_response_transfer_flatbuffer(
   osrmc_transfer_flatbuffer_helper(resp, data, size, deleter, error);
 } catch (const std::exception& e) {
   osrmc_error_from_exception(e, error);
-  if (data) *data = nullptr;
-  if (size) *size = 0;
-  if (deleter) *deleter = nullptr;
+  if (data)
+    *data = nullptr;
+  if (size)
+    *size = 0;
+  if (deleter)
+    *deleter = nullptr;
 }
 
 /* Tile */
