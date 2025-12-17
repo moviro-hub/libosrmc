@@ -380,7 +380,7 @@ osrmc_route_params_get_waypoint_count(osrmc_route_params_t params, size_t* out_c
 OSRMC_API void
 osrmc_route_params_get_waypoint(osrmc_route_params_t params, size_t index, size_t* out_index, osrmc_error_t* error);
 OSRMC_API void
-osrmc_route_params_clear_waypoints(osrmc_route_params_t params);
+osrmc_route_params_clear_waypoints(osrmc_route_params_t params, osrmc_error_t* error);
 
 // Route response constructor and destructor
 OSRMC_API osrmc_route_response_t
@@ -501,7 +501,7 @@ osrmc_match_params_get_waypoint_count(osrmc_match_params_t params, size_t* out_c
 OSRMC_API void
 osrmc_match_params_get_waypoint(osrmc_match_params_t params, size_t index, size_t* out_index, osrmc_error_t* error);
 OSRMC_API void
-osrmc_match_params_clear_waypoints(osrmc_match_params_t params);
+osrmc_match_params_clear_waypoints(osrmc_match_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_match_params_add_timestamp(osrmc_match_params_t params, unsigned timestamp, osrmc_error_t* error);
 OSRMC_API void
@@ -588,7 +588,7 @@ osrmc_trip_params_get_annotations(osrmc_trip_params_t params,
                                   annotations_type_t* out_annotations,
                                   osrmc_error_t* error);
 OSRMC_API void
-osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params);
+osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params, osrmc_error_t* error);
 OSRMC_API void
 osrmc_trip_params_add_waypoint(osrmc_trip_params_t params, size_t index, osrmc_error_t* error);
 OSRMC_API void

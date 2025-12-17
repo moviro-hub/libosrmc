@@ -1719,11 +1719,15 @@ osrmc_route_params_get_waypoint(osrmc_route_params_t params,
 }
 
 void
-osrmc_route_params_clear_waypoints(osrmc_route_params_t params) {
-  if (params) {
-    auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
-    params_typed->waypoints.clear();
+osrmc_route_params_clear_waypoints(osrmc_route_params_t params, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
   }
+  auto* params_typed = reinterpret_cast<osrm::RouteParameters*>(params);
+  params_typed->waypoints.clear();
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
 }
 
 osrmc_route_response_t
@@ -2453,11 +2457,15 @@ osrmc_match_params_get_waypoint(osrmc_match_params_t params,
 }
 
 void
-osrmc_match_params_clear_waypoints(osrmc_match_params_t params) {
-  if (params) {
-    auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
-    params_typed->waypoints.clear();
+osrmc_match_params_clear_waypoints(osrmc_match_params_t params, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
   }
+  auto* params_typed = reinterpret_cast<osrm::MatchParameters*>(params);
+  params_typed->waypoints.clear();
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
 }
 
 void
@@ -2989,11 +2997,15 @@ osrmc_trip_params_get_annotations(osrmc_trip_params_t params,
 }
 
 void
-osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params) {
-  if (params) {
-    auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
-    params_typed->waypoints.clear();
+osrmc_trip_params_clear_waypoints(osrmc_trip_params_t params, osrmc_error_t* error) try {
+  if (!params) {
+    osrmc_set_error(error, "InvalidArgument", "Params must not be null");
+    return;
   }
+  auto* params_typed = reinterpret_cast<osrm::TripParameters*>(params);
+  params_typed->waypoints.clear();
+} catch (const std::exception& e) {
+  osrmc_error_from_exception(e, error);
 }
 
 void
