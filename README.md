@@ -46,6 +46,6 @@ The code is tested through the Julia package [OpenSourceRoutingMachine.jl](https
 
 ## License
 
-Copyright © 2025 MOVIRO GmbH & Daniel J. Hofmann & others
+Copyright (c) 2025 MOVIRO GmbH, Daniel J. Hofmann and contributors
 
-Distributed under the MIT License.
+Licensed under the MIT License.
