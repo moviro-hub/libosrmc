@@ -12,6 +12,10 @@ Originally forked from Daniel Hofmann's [`libosrmc`](https://github.com/daniel-j
 
 **Supported platforms:** Linux, macOS, Windows (MinGW)
 
+## Versioning
+
+`libosrmc` uses aligned versioning with OSRM: `libosrmc X.Y.Z` requires OSRM `X.Y`. Patch versions are independent and indicate interface-only changes.
+
 ## Build and Install
 
 ```bash
