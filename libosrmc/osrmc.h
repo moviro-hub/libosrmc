@@ -125,9 +125,9 @@ typedef enum {
 } annotations_type_t;
 // Table annotations
 typedef enum {
-  TABLE_ANNOTATIONS_NONE = 1,
-  TABLE_ANNOTATIONS_DURATION = 2,
-  TABLE_ANNOTATIONS_DISTANCE = 4,
+  TABLE_ANNOTATIONS_NONE = 0,
+  TABLE_ANNOTATIONS_DURATION = 1,
+  TABLE_ANNOTATIONS_DISTANCE = 2,
   TABLE_ANNOTATIONS_ALL = 3
 } table_annotations_type_t;
 // Table coordinate
