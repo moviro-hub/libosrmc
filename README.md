@@ -6,7 +6,7 @@ Originally forked from Daniel Hofmann's [`libosrmc`](https://github.com/daniel-j
 
 ## Dependencies
 
-- **OSRM 6.0**: [OSRM](https://github.com/Project-OSRM/osrm-backend)
+- **OSRM 26.6.4**: [OSRM](https://github.com/Project-OSRM/osrm-backend)
 - **C++20 compiler**: GCC 10+ or Clang 12+
 - **pkg-config**: For locating OSRM configuration
 

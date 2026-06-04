@@ -73,9 +73,9 @@ extern "C" {
 #define OSRMC_API
 #endif
 
-#define OSRMC_VERSION_MAJOR 6
-#define OSRMC_VERSION_MINOR 1
-#define OSRMC_VERSION_PATCH 0
+#define OSRMC_VERSION_MAJOR 26
+#define OSRMC_VERSION_MINOR 6
+#define OSRMC_VERSION_PATCH 4
 // Version encoding: major (16 bits) | minor (8 bits) | patch (8 bits)
 #define OSRMC_VERSION ((OSRMC_VERSION_MAJOR << 16) | (OSRMC_VERSION_MINOR << 8) | OSRMC_VERSION_PATCH)
 
@@ -125,7 +125,7 @@ typedef enum { APPROACH_CURB = 0, APPROACH_UNRESTRICTED = 1, APPROACH_OPPOSITE =
 typedef enum { GEOMETRIES_POLYLINE = 0, GEOMETRIES_POLYLINE6 = 1, GEOMETRIES_GEOJSON = 2 } geometries_type_t;
 // Overviews
 typedef enum { OVERVIEW_SIMPLIFIED = 0, OVERVIEW_FULL = 1, OVERVIEW_FALSE = 2, OVERVIEW_BY_LEGS = 3 } overview_type_t;
-// Annotations
+// Route/match annotations. OSRM 26.6.4 FlatBuffers encode NODES values as uint64.
 typedef enum {
   ANNOTATIONS_NONE = 0,
   ANNOTATIONS_DURATION = 1,
