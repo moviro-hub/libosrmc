@@ -6,7 +6,7 @@ Originally forked from Daniel Hofmann's [`libosrmc`](https://github.com/daniel-j
 
 ## Dependencies
 
-- **OSRM 26.6.4**: [OSRM](https://github.com/Project-OSRM/osrm-backend)
+- **OSRM 26.6.5**: [OSRM](https://github.com/Project-OSRM/osrm-backend)
 - **C++20 compiler**: GCC 10+ or Clang 12+
 - **pkg-config**: For locating OSRM configuration
 
@@ -44,6 +44,7 @@ For usage examples, see the [OpenSourceRoutingMachine.jl](https://github.com/mov
 - **Tile**: Retrieve road network geometry as vector tiles
 
 All services, except the Tile service, return output in [FlatBuffers](https://github.com/google/flatbuffers) format.
+In OSRM 26.6.x, route and match annotation `nodes` are encoded as 64-bit unsigned integers in that FlatBuffers schema.
 The Tile service returns road network geometry in [MVT](https://github.com/mapbox/vector-tile-spec) format.
 
 The code is tested through the Julia package [OpenSourceRoutingMachine.jl](https://github.com/moviro-hub/OpenSourceRoutingMachine.jl).
