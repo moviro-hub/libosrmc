@@ -47,7 +47,6 @@ For usage examples, see the [OpenSourceRoutingMachine.jl](https://github.com/mov
 - **Tile**: Retrieve road network geometry as vector tiles
 
 All services, except the Tile service, return output in [FlatBuffers](https://github.com/google/flatbuffers) format.
-In OSRM 26.7, route and match annotation `nodes` are encoded as 64-bit unsigned integers in that FlatBuffers schema.
 The Tile service returns road network geometry in [MVT](https://github.com/mapbox/vector-tile-spec) format.
 
 The code is tested through the Julia package [OpenSourceRoutingMachine.jl](https://github.com/moviro-hub/OpenSourceRoutingMachine.jl).

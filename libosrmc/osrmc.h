@@ -127,7 +127,7 @@ typedef enum { APPROACH_CURB = 0, APPROACH_UNRESTRICTED = 1, APPROACH_OPPOSITE =
 typedef enum { GEOMETRIES_POLYLINE = 0, GEOMETRIES_POLYLINE6 = 1, GEOMETRIES_GEOJSON = 2 } geometries_type_t;
 // Overviews
 typedef enum { OVERVIEW_SIMPLIFIED = 0, OVERVIEW_FULL = 1, OVERVIEW_FALSE = 2, OVERVIEW_BY_LEGS = 3 } overview_type_t;
-// Route/match annotations. OSRM 26.7 FlatBuffers encode NODES values as uint64.
+// Route/match annotations.
 typedef enum {
   ANNOTATIONS_NONE = 0,
   ANNOTATIONS_DURATION = 1,
