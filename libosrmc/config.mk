@@ -1,8 +1,8 @@
 # libosrmc Build Configuration
 
 VERSION_MAJOR = 26
-VERSION_MINOR = 6
-VERSION_PATCH = 5
+VERSION_MINOR = 7
+VERSION_PATCH = 2
 
 PREFIX ?= /usr/local
 PKG_CONFIG_PATH ?= $(PREFIX)/lib/pkgconfig
