@@ -87,6 +87,14 @@ ifeq ($(SKIP_DEPS),)
         $(error libosrm not found. Please ensure OSRM is installed and pkg-config can find it.)
     endif
 
+    # libosrmc tracks OSRM by major.minor: any 26.7.x patch is compatible, but a
+    # different major/minor is an API/ABI this libosrmc was not written against.
+    # $(basename 26.7.2) -> 26.7; compare to this libosrmc's own major.minor.
+    OSRM_VERSION := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(PKG_CONFIG) --modversion libosrm 2>/dev/null)
+    ifneq ($(basename $(OSRM_VERSION)),$(VERSION_MAJOR).$(VERSION_MINOR))
+        $(error libosrmc $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH) requires OSRM $(VERSION_MAJOR).$(VERSION_MINOR).x, but pkg-config reports libosrm '$(OSRM_VERSION)')
+    endif
+
     OSRM_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(PKG_CONFIG) --cflags libosrm 2>/dev/null)
     OSRM_LIBDIR := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(PKG_CONFIG) --variable=libdir libosrm 2>/dev/null)
     OSRM_LDFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(PKG_CONFIG) --libs libosrm 2>/dev/null)
