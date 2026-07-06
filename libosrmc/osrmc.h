@@ -73,9 +73,11 @@ extern "C" {
 #define OSRMC_API
 #endif
 
+/* MAJOR.MINOR track the OSRM compatibility line (26.7.x); PATCH is libosrmc's
+ * own release number for that line, independent of OSRM's patch. */
 #define OSRMC_VERSION_MAJOR 26
 #define OSRMC_VERSION_MINOR 7
-#define OSRMC_VERSION_PATCH 2
+#define OSRMC_VERSION_PATCH 0
 // Version encoding: major (16 bits) | minor (8 bits) | patch (8 bits)
 #define OSRMC_VERSION ((OSRMC_VERSION_MAJOR << 16) | (OSRMC_VERSION_MINOR << 8) | OSRMC_VERSION_PATCH)
 

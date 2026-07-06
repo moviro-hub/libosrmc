@@ -1,8 +1,12 @@
 # libosrmc Build Configuration
 
+# Version scheme: MAJOR.MINOR track the OSRM compatibility line this libosrmc
+# targets (OSRM 26.7.x — see the pkg-config gate below). PATCH is libosrmc's
+# OWN release number for that line, independent of OSRM's patch: bump it for
+# libosrmc changes that still target the same OSRM major.minor.
 VERSION_MAJOR = 26
 VERSION_MINOR = 7
-VERSION_PATCH = 2
+VERSION_PATCH = 0
 
 PREFIX ?= /usr/local
 PKG_CONFIG_PATH ?= $(PREFIX)/lib/pkgconfig
